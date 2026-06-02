@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>KOSPI / Nasdaq Market Map</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <div>
+          <h1>한국 / 미국 주식 마켓맵</h1>
+          <p id="refreshLabel">시장 상태 확인 중</p>
+        </div>
+      </div>
+      <div class="indices" aria-label="주요 지수">
+        <div class="index-card" id="kospiIndex">
+          <span class="index-name">KOSPI</span>
+          <strong>--</strong>
+          <span class="index-change">--</span>
+        </div>
+        <div class="index-card" id="kosdaqIndex">
+          <span class="index-name">KOSDAQ</span>
+          <strong>--</strong>
+          <span class="index-change">--</span>
+        </div>
+        <div class="index-card" id="usdKrwIndex">
+          <span class="index-name">USD/KRW</span>
+          <strong>--</strong>
+          <span class="index-change">--</span>
+        </div>
+        <div class="index-card" id="nasdaqIndex">
+          <span class="index-name">Nasdaq</span>
+          <strong>--</strong>
+          <span class="index-change">--</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="dashboard">
+      <section class="panel panel-korea">
+        <div class="panel-head">
+          <div>
+            <h2 id="koreaTitle">KOSPI</h2>
+            <p id="koreaSubtitle">한국경제 KOSPI 마켓맵</p>
+          </div>
+          <div class="panel-actions">
+            <div class="segmented" aria-label="한국 시장 선택">
+              <button class="segment active" type="button" data-market="KOSPI">KOSPI</button>
+              <button class="segment" type="button" data-market="KOSDAQ">KOSDAQ</button>
+            </div>
+            <button class="icon-button" id="refreshKorea" type="button" title="새로고침" aria-label="한국 맵 새로고침">↻</button>
+          </div>
+        </div>
+        <div class="map-frame">
+          <div id="koreaMap" class="treemap" role="application" aria-label="KOSPI 종목 마켓맵"></div>
+          <div id="koreaLoading" class="loading">KOSPI 맵을 불러오는 중</div>
+        </div>
+      </section>
+
+      <section class="panel panel-us">
+        <div class="panel-head">
+          <div>
+            <h2>US Sectors</h2>
+            <p>Finviz S&P 500 섹터 맵</p>
+          </div>
+          <button class="icon-button" id="refreshUs" type="button" title="새로고침" aria-label="미국 맵 새로고침">↻</button>
+        </div>
+        <div class="map-frame">
+          <iframe id="usMap" src="/finviz-map" title="Finviz sector map"></iframe>
+        </div>
+      </section>
+    </main>
+
+    <div class="modal-backdrop" id="modalBackdrop" hidden>
+      <article class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <button class="modal-close" id="modalClose" type="button" aria-label="닫기">×</button>
+        <div id="modalBody"></div>
+      </article>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
