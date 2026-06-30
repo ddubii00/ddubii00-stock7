@@ -43,20 +43,31 @@
       <section class="panel panel-korea">
         <div class="panel-head">
           <div>
-            <h2 id="koreaTitle">KOSPI</h2>
-            <p id="koreaSubtitle">한국경제 KOSPI 마켓맵</p>
+            <h2 id="koreaTitle">KRX300</h2>
+            <p id="koreaSubtitle">KOSPD KRX 300 1일 맵</p>
           </div>
           <div class="panel-actions">
             <div class="segmented" aria-label="한국 시장 선택">
-              <button class="segment active" type="button" data-market="KOSPI">KOSPI</button>
+              <button class="segment" type="button" data-market="KOSPI">KOSPI</button>
               <button class="segment" type="button" data-market="KOSDAQ">KOSDAQ</button>
+              <button class="segment active" type="button" data-market="KRX300">KRX300</button>
             </div>
+            <button class="back-button" id="sectorBack" type="button" hidden>전체</button>
             <button class="icon-button" id="refreshKorea" type="button" title="새로고침" aria-label="한국 맵 새로고침">↻</button>
           </div>
         </div>
+        <div class="period-bar" aria-label="한국 맵 조회기간">
+          <button class="period active" type="button" data-term="1day">1일</button>
+          <button class="period" type="button" data-term="1week">일주일</button>
+          <button class="period" type="button" data-term="1month">한 달</button>
+          <button class="period" type="button" data-term="3months">세 달</button>
+          <button class="period" type="button" data-term="6months">여섯 달</button>
+          <button class="period" type="button" data-term="1year">일 년</button>
+          <button class="period" type="button" data-term="ytd">연초</button>
+        </div>
         <div class="map-frame">
-          <div id="koreaMap" class="treemap" role="application" aria-label="KOSPI 종목 마켓맵"></div>
-          <div id="koreaLoading" class="loading">KOSPI 맵을 불러오는 중</div>
+          <div id="koreaMap" class="treemap" role="application" aria-label="KRX300 종목 마켓맵"></div>
+          <div id="koreaLoading" class="loading">KRX300 맵을 불러오는 중</div>
         </div>
       </section>
 
@@ -69,7 +80,7 @@
           <button class="icon-button" id="refreshUs" type="button" title="새로고침" aria-label="미국 맵 새로고침">↻</button>
         </div>
         <div class="map-frame">
-          <iframe id="usMap" src="/finviz-map" title="Finviz sector map"></iframe>
+          <iframe id="usMap" src="/finviz-map" title="Finviz sector map" sandbox="allow-scripts"></iframe>
         </div>
       </section>
     </main>

@@ -1,12 +1,15 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const vm = require("vm");
 
 const PORT = Number(process.env.PORT || 8000);
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 const HANKYUNG_API_KEY =
   "0ZdNlr7LrQoawewqweq78k6usasBsqhqSIaUarSTf8mxnHuQVh9CvKAfpUy94LhBmZMg";
+const KOSPD_MAP_BASE_URL = "https://www.kospd.com/maps";
+const KOSPD_TERMS = new Set(["1day", "1week", "1month", "3months", "6months", "1year", "ytd"]);
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36";
 
@@ -99,6 +102,169 @@ function hankyungHeatColor(rate) {
   return "#414654";
 }
 
+function kospdHeatColor(rate) {
+  const value = Number(rate) || 0;
+  if (value >= 3) return "#f3243b";
+  if (value >= 2) return "#bd3945";
+  if (value > 0) return "#8a414e";
+  if (value <= -3) return "#4b87ff";
+  if (value <= -2) return "#4675f0";
+  if (value < 0) return "#4162c4";
+  return "#414654";
+}
+
+function parsePercent(value) {
+  if (value == null) return null;
+  const parsed = Number(String(value).replace(/[%+,]/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function extractJsValue(text, token) {
+  const tokenIndex = text.indexOf(token);
+  if (tokenIndex < 0) {
+    throw new Error(`${token} not found`);
+  }
+
+  const start = text.indexOf("[", tokenIndex);
+  if (start < 0) {
+    throw new Error(`${token} value not found`);
+  }
+
+  let depth = 0;
+  let quote = "";
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = "";
+      }
+      continue;
+    }
+
+    if (char === "\"" || char === "'" || char === "`") {
+      quote = char;
+      continue;
+    }
+
+    if (char === "[") depth += 1;
+    if (char === "]") depth -= 1;
+    if (depth === 0) return text.slice(start, index + 1);
+  }
+
+  throw new Error(`${token} value is incomplete`);
+}
+
+function parseKospdMapData(html) {
+  const source = extractJsValue(html, "mapData:");
+  const mapData = vm.runInNewContext(`(${source})`, Object.create(null), { timeout: 1000 });
+  if (!Array.isArray(mapData) || !mapData[0]) {
+    throw new Error("KOSPD mapData is empty");
+  }
+  return mapData[0];
+}
+
+async function getHankyungStockLookup() {
+  const markets = [
+    ["KOSPI", "1001"],
+    ["KOSDAQ", "2001"],
+  ];
+  const results = await Promise.allSettled(
+    markets.map(([symbol, upcode]) =>
+      fetchJson(
+        `https://markets.hankyung.com/api/v2/stock/filter/stocks?upcode=${upcode}&sortBy=mkt_cap&num=2000`,
+        { headers: hankyungHeaders(symbol) },
+        60000
+      )
+    )
+  );
+
+  const byName = new Map();
+  results.forEach((result, index) => {
+    if (result.status !== "fulfilled" || !Array.isArray(result.value)) return;
+    const symbol = markets[index][0];
+    result.value.forEach((stock) => {
+      const name = stock.shname || stock.name;
+      if (!name || byName.has(name)) return;
+      byName.set(name, { ...stock, sourceMarket: symbol });
+    });
+  });
+  return byName;
+}
+
+function normalizeKospdMap(trace, stockLookup, term, sourceUrl) {
+  const labels = trace.labels || [];
+  const parents = trace.parents || [];
+  const values = trace.values || [];
+  const colors = trace.marker?.colors || [];
+  const custom = trace.customdata || [];
+  const groups = new Map();
+
+  labels.forEach((label, index) => {
+    const parent = parents[index];
+    if (!parent) return;
+
+    const matched = stockLookup.get(label);
+    const trader = matched?.stock_trader || {};
+    const rate = formatNumber(colors[index]) ?? parsePercent(custom[index]) ?? 0;
+    const marketCap = formatNumber(values[index]) ?? formatNumber(trader.mkt_cap ?? matched?.mkt_cap) ?? 0;
+    const group = groups.get(parent) || {
+      name: parent,
+      upcode: parent,
+      type: "industry",
+      children: [],
+    };
+
+    group.children.push({
+      shcode: matched?.shcode || "",
+      name: label,
+      value: marketCap,
+      chgrate: rate,
+      chgprc: formatNumber(trader.chgprc),
+      date: trader.workdate || "",
+      volume: trader.volume || matched?.prevol,
+      close: formatNumber(trader.curprc ?? matched?.close_1dy ?? matched?.baseprc),
+      previous: formatNumber(matched?.close_1dy ?? matched?.preprice ?? matched?.baseprc),
+      open: formatNumber(trader.openprc),
+      high: formatNumber(trader.highprc),
+      low: formatNumber(trader.lowprc),
+      sourceMarket: matched?.sourceMarket || "KRX300",
+      fill: kospdHeatColor(rate),
+      type: "stock",
+    });
+
+    groups.set(parent, group);
+  });
+
+  const children = Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      children: group.children.sort((a, b) => b.value - a.value),
+    }))
+    .filter((group) => group.children.length)
+    .sort(
+      (a, b) =>
+        b.children.reduce((sum, stock) => sum + stock.value, 0) -
+        a.children.reduce((sum, stock) => sum + stock.value, 0)
+    );
+
+  return {
+    name: "KOSPD KRX 300",
+    header: term,
+    id: `KOSPD-KRX300-${term.toUpperCase()}`,
+    symbol: "KRX300",
+    source: "KOSPD",
+    sourceUrl,
+    children,
+  };
+}
+
 function normalizeKoreaMap(symbol, industries, stocks) {
   const industryNames = new Map(
     industries.map((industry) => [String(industry.upcode), industry.name || industry.hname])
@@ -164,12 +330,29 @@ function normalizeKoreaMap(symbol, industries, stocks) {
 }
 
 function parseKoreaMarket(value) {
-  const market = String(value || "KOSPI").toUpperCase();
+  const market = String(value || "KRX300").toUpperCase();
+  if (market === "KRX300") return "KRX300";
   return market === "KOSDAQ" ? "KOSDAQ" : "KOSPI";
 }
 
-async function getKoreaMap(res, market) {
+function parseKospdTerm(value) {
+  const term = String(value || "1day").toLowerCase();
+  return KOSPD_TERMS.has(term) ? term : "1day";
+}
+
+async function getKoreaMap(res, market, termValue) {
   const symbol = parseKoreaMarket(market);
+  if (symbol === "KRX300") {
+    const term = parseKospdTerm(termValue);
+    const sourceUrl = `${KOSPD_MAP_BASE_URL}/${term}`;
+    const [html, stockLookup] = await Promise.all([
+      fetchText(sourceUrl, { headers: { Referer: "https://www.kospd.com/" } }, 5000),
+      getHankyungStockLookup(),
+    ]);
+    sendJson(res, 200, normalizeKospdMap(parseKospdMapData(html), stockLookup, term, sourceUrl));
+    return;
+  }
+
   const upcode = symbol === "KOSDAQ" ? "2001" : "1001";
   const [industries, stocks] = await Promise.all([
     fetchJson(`https://markets.hankyung.com/api/v2/index/symb/${symbol}/industries`, {
@@ -288,6 +471,20 @@ async function getUsStock(res, ticker) {
 
 async function getFinvizMap(res) {
   let html = await fetchText("https://finviz.com/map?t=sec&st=d1", {}, 2500);
+  html = html
+    .replace(
+      /<script\b[^>]*>[\s\S]*?<\/script>/gi,
+      (block) =>
+        /google|googletagmanager|googlesyndication|googleadservices|doubleclick|gstatic|adsbygoogle|accounts\.google|gtm\.js/i.test(block)
+          ? ""
+          : block
+    )
+    .replace(
+      /<iframe\b[^>]*(?:google|googletagmanager|googlesyndication|googleadservices|doubleclick|gstatic|accounts\.google)[\s\S]*?<\/iframe>/gi,
+      ""
+    )
+    .replace(/<ins\b[^>]*class=["'][^"']*adsbygoogle[^"']*["'][\s\S]*?<\/ins>/gi, "");
+
   const inject = `
 <base href="https://finviz.com/">
 <script>
@@ -317,6 +514,14 @@ async function getFinvizMap(res) {
       "[class*='login' i]",
       "[id*='newsletter' i]",
       "[class*='newsletter' i]",
+      "[id*='google' i]",
+      "[class*='google' i]",
+      "[id*='credential' i]",
+      "[class*='credential' i]",
+      "[id*='g_id' i]",
+      "iframe[src*='google' i]",
+      "iframe[src*='accounts' i]",
+      "iframe[src*='doubleclick' i]",
       "[id*='elite' i][id*='modal' i]",
       "[class*='elite' i][class*='modal' i]",
       "[role='dialog']",
@@ -436,6 +641,14 @@ async function getFinvizMap(res) {
   .header,
   .footer,
   .advertisement,
+  iframe[src*="google" i],
+  iframe[src*="accounts" i],
+  iframe[src*="doubleclick" i],
+  [id*="google" i],
+  [class*="google" i],
+  [id*="credential" i],
+  [class*="credential" i],
+  [id*="g_id" i],
   #modal-elite-ad,
   [id*="login" i],
   [class*="login" i],
@@ -523,7 +736,18 @@ async function getFinvizMap(res) {
   send(res, 200, html, {
     "Content-Type": "text/html; charset=utf-8",
     "X-Frame-Options": "",
-    "Content-Security-Policy": "",
+    "Content-Security-Policy": [
+      "default-src 'self' https://finviz.com https://*.finviz.com",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://finviz.com https://*.finviz.com",
+      "style-src 'self' 'unsafe-inline' https://finviz.com https://*.finviz.com",
+      "img-src 'self' data: https://finviz.com https://*.finviz.com",
+      "font-src 'self' data: https://finviz.com https://*.finviz.com",
+      "connect-src 'self' https://finviz.com https://*.finviz.com",
+      "frame-src 'none'",
+      "child-src 'none'",
+      "form-action 'none'",
+      "base-uri https://finviz.com",
+    ].join("; "),
   });
 }
 
@@ -556,7 +780,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/korea-map") {
-      await getKoreaMap(res, url.searchParams.get("market"));
+      await getKoreaMap(res, url.searchParams.get("market"), url.searchParams.get("term"));
       return;
     }
 
