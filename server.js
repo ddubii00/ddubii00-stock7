@@ -198,7 +198,7 @@ async function getHankyungStockLookup() {
   return byName;
 }
 
-function normalizeKospdMap(trace, stockLookup, term, sourceUrl) {
+function normalizeKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "") {
   const labels = trace.labels || [];
   const parents = trace.parents || [];
   const values = trace.values || [];
@@ -211,6 +211,7 @@ function normalizeKospdMap(trace, stockLookup, term, sourceUrl) {
     if (!parent) return;
 
     const matched = stockLookup.get(label);
+    if (marketFilter && matched?.sourceMarket !== marketFilter) return;
     const trader = matched?.stock_trader || {};
     const rate = formatNumber(colors[index]) ?? parsePercent(custom[index]) ?? 0;
     const marketCap = formatNumber(values[index]) ?? formatNumber(trader.mkt_cap ?? matched?.mkt_cap) ?? 0;
@@ -255,10 +256,10 @@ function normalizeKospdMap(trace, stockLookup, term, sourceUrl) {
     );
 
   return {
-    name: "KOSPD KRX 300",
+    name: marketFilter ? `KOSPD ${marketFilter}` : "KOSPD KRX 300",
     header: term,
-    id: `KOSPD-KRX300-${term.toUpperCase()}`,
-    symbol: "KRX300",
+    id: `KOSPD-${marketFilter || "KRX300"}-${term.toUpperCase()}`,
+    symbol: marketFilter || "KRX300",
     source: "KOSPD",
     sourceUrl,
     children,
@@ -330,7 +331,7 @@ function normalizeKoreaMap(symbol, industries, stocks) {
 }
 
 function parseKoreaMarket(value) {
-  const market = String(value || "KRX300").toUpperCase();
+  const market = String(value || "KOSPI").toUpperCase();
   if (market === "KRX300") return "KRX300";
   return market === "KOSDAQ" ? "KOSDAQ" : "KOSPI";
 }
@@ -342,14 +343,18 @@ function parseKospdTerm(value) {
 
 async function getKoreaMap(res, market, termValue) {
   const symbol = parseKoreaMarket(market);
-  if (symbol === "KRX300") {
-    const term = parseKospdTerm(termValue);
+  const term = parseKospdTerm(termValue);
+  if (symbol === "KRX300" || term !== "1day") {
     const sourceUrl = `${KOSPD_MAP_BASE_URL}/${term}`;
     const [html, stockLookup] = await Promise.all([
       fetchText(sourceUrl, { headers: { Referer: "https://www.kospd.com/" } }, 5000),
       getHankyungStockLookup(),
     ]);
-    sendJson(res, 200, normalizeKospdMap(parseKospdMapData(html), stockLookup, term, sourceUrl));
+    sendJson(
+      res,
+      200,
+      normalizeKospdMap(parseKospdMapData(html), stockLookup, term, sourceUrl, symbol === "KRX300" ? "" : symbol)
+    );
     return;
   }
 
@@ -409,14 +414,57 @@ function parseStooqQuote(csv, symbol) {
   };
 }
 
+async function fetchTradingViewQuotes(tickers) {
+  const data = await fetchJson(
+    "https://scanner.tradingview.com/global/scan",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://www.tradingview.com",
+        Referer: "https://www.tradingview.com/",
+      },
+      body: JSON.stringify({
+        symbols: { tickers },
+        columns: ["close", "change", "change_abs"],
+      }),
+    },
+    1500
+  );
+
+  const quotes = new Map();
+  (data.data || []).forEach((row) => {
+    quotes.set(row.s, row.d || []);
+  });
+  return quotes;
+}
+
+function tradingViewIndex(name, quotes, symbol) {
+  const row = quotes.get(symbol);
+  if (!row) {
+    return { name, close: null, change: null, changeRate: null, available: false };
+  }
+
+  return {
+    name,
+    close: formatNumber(row[0]),
+    changeRate: formatNumber(row[1]),
+    change: formatNumber(row[2]),
+    available: row[0] != null,
+  };
+}
+
 async function getIndices(res) {
-  const [summary, nasdaqCsv, usdKrwCsv] = await Promise.all([
+  const [summaryResult, tvResult] = await Promise.allSettled([
     fetchJson("https://markets.hankyung.com/api/v2/main/summary-indices", {
       headers: hankyungHeaders(),
     }, 2500),
-    fetchText("https://stooq.com/q/l/?s=%5Endq&f=sd2t2ohlcvp&e=csv", {}, 2500),
-    fetchText("https://stooq.com/q/l/?s=usdkrw&f=sd2t2ohlcvp&e=csv", {}, 2500),
+    fetchTradingViewQuotes(["NASDAQ:IXIC", "CBOE:SPX", "FX_IDC:USDKRW"]),
   ]);
+  const summary = summaryResult.status === "fulfilled" && Array.isArray(summaryResult.value)
+    ? summaryResult.value
+    : [];
+  const tvQuotes = tvResult.status === "fulfilled" ? tvResult.value : new Map();
 
   const kospi = summary.find((item) => item.upcode === "1001" || item.hname === "코스피");
   const kosdaq = summary.find((item) => item.upcode === "2001" || item.hname === "코스닥");
@@ -436,14 +484,9 @@ async function getIndices(res) {
   sendJson(res, 200, {
     kospi: koreaIndex("KOSPI", kospiTrader),
     kosdaq: koreaIndex("KOSDAQ", kosdaqTrader),
-    usdkrw: {
-      name: "USD/KRW",
-      ...parseStooqQuote(usdKrwCsv, "USDKRW"),
-    },
-    nasdaq: {
-      name: "Nasdaq",
-      ...parseStooqQuote(nasdaqCsv, "^NDQ"),
-    },
+    usdkrw: tradingViewIndex("USD/KRW", tvQuotes, "FX_IDC:USDKRW"),
+    nasdaq: tradingViewIndex("Nasdaq", tvQuotes, "NASDAQ:IXIC"),
+    sp500: tradingViewIndex("S&P 500", tvQuotes, "CBOE:SPX"),
     updatedAt: new Date().toISOString(),
   });
 }
@@ -475,15 +518,17 @@ async function getFinvizMap(res) {
     .replace(
       /<script\b[^>]*>[\s\S]*?<\/script>/gi,
       (block) =>
-        /google|googletagmanager|googlesyndication|googleadservices|doubleclick|gstatic|adsbygoogle|accounts\.google|gtm\.js/i.test(block)
+        /google|googletagmanager|googlesyndication|googleadservices|doubleclick|gstatic|adsbygoogle|accounts\.google|gtm\.js|admiral|urbanlaurel|__tcfapi|__gpp|pubads|candidate\.dismissed|cmp\.loaded/i.test(block)
           ? ""
           : block
     )
     .replace(
-      /<iframe\b[^>]*(?:google|googletagmanager|googlesyndication|googleadservices|doubleclick|gstatic|accounts\.google)[\s\S]*?<\/iframe>/gi,
+      /<iframe\b[^>]*(?:google|googletagmanager|googlesyndication|googleadservices|doubleclick|gstatic|accounts\.google|__tcfapi|__gpp|admiral)[\s\S]*?<\/iframe>/gi,
       ""
     )
-    .replace(/<ins\b[^>]*class=["'][^"']*adsbygoogle[^"']*["'][\s\S]*?<\/ins>/gi, "");
+    .replace(/Your browser blocks cookies and\/or local storage, some page functionality might be unavailable\./gi, "")
+    .replace(/<ins\b[^>]*class=["'][^"']*adsbygoogle[^"']*["'][\s\S]*?<\/ins>/gi, "")
+    .replace(/<a\b[^>]*href=["'][^"']*\/(?:login|register)[^"']*["'][\s\S]*?<\/a>/gi, "");
 
   const inject = `
 <base href="https://finviz.com/">
@@ -538,6 +583,28 @@ async function getFinvizMap(res) {
       document.body.classList.remove("overflow-hidden", "modal-open");
       document.body.style.overflow = "auto";
     }
+    clearStorageWarning();
+  }
+
+  function clearStorageWarning() {
+    if (!document.body) return;
+    var warning = "Your browser blocks cookies and/or local storage";
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    var nodes = [];
+    while (walker.nextNode()) {
+      if ((walker.currentNode.nodeValue || "").indexOf(warning) >= 0) {
+        nodes.push(walker.currentNode);
+      }
+    }
+    nodes.forEach(function (node) {
+      var parent = node.parentElement;
+      var box = parent && parent.closest("div, section, article, aside, p, span");
+      if (box && box !== document.body) {
+        box.remove();
+      } else {
+        node.nodeValue = "";
+      }
+    });
   }
 
   function showHeatMapOnly() {
@@ -675,8 +742,23 @@ async function getFinvizMap(res) {
   }
 
   function tickerFromValue(value) {
-    var match = String(value || "").match(/(?:[?&]t=|^)([A-Z]{1,6}(?:[.-][A-Z])?)(?:$|[&\\s:])/);
+    var text = String(value || "").replace(/\\s+/g, " ").trim();
+    var match = text.match(/[?&]t=([A-Z]{1,6}(?:[.-][A-Z])?)/i);
+    if (match) return match[1].toUpperCase().replace("-", ".");
+    match = text.match(/^([A-Z]{1,6}(?:[.-][A-Z])?)(?:$|[\\s:|,$()])/);
+    if (match) return match[1].replace("-", ".");
+    match = text.match(/\\b([A-Z]{1,5}(?:[.-][A-Z])?)\\b(?=\\s+(?:[-+]?\\d|\\$))/);
     return match ? match[1].replace("-", ".") : "";
+  }
+
+  function tickerFromHover() {
+    var hover = document.getElementById("hover");
+    if (!hover) return "";
+    return tickerFromValue([
+      hover.textContent || "",
+      hover.getAttribute("title") || "",
+      hover.getAttribute("data-ticker") || ""
+    ].join(" "));
   }
 
   function pickTicker(target) {
@@ -700,7 +782,7 @@ async function getFinvizMap(res) {
   };
 
   document.addEventListener("click", function (event) {
-    var ticker = pickTicker(event.target);
+    var ticker = pickTicker(event.target) || tickerFromHover();
     if (!ticker) return;
     event.preventDefault();
     event.stopPropagation();
@@ -708,7 +790,7 @@ async function getFinvizMap(res) {
   }, true);
 
   document.addEventListener("dblclick", function (event) {
-    var ticker = pickTicker(event.target);
+    var ticker = pickTicker(event.target) || tickerFromHover();
     if (!ticker) return;
     event.preventDefault();
     event.stopPropagation();

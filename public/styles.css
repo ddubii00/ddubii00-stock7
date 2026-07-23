@@ -78,11 +78,45 @@ h1 {
   font-size: 12px;
 }
 
+.panel-index-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.mini-index {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  gap: 2px 8px;
+  min-width: 148px;
+  padding: 6px 8px;
+  border: 1px solid #344054;
+  background: #121925;
+}
+
+.mini-index span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.mini-index strong {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.mini-index .index-change {
+  font-size: 13px;
+}
+
 .indices {
   display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  grid-template-columns: repeat(5, minmax(132px, 1fr));
   gap: 10px;
-  width: min(840px, 66vw);
+  width: min(980px, 70vw);
 }
 
 .index-card {
@@ -243,8 +277,21 @@ h1 {
 }
 
 .icon-button:hover,
+.refresh-button:hover,
 .modal-close:hover {
   border-color: #72819a;
+}
+
+.refresh-button {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid #414b5e;
+  background: #101722;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 760;
+  white-space: nowrap;
 }
 
 .map-frame {
@@ -542,6 +589,7 @@ iframe {
 
   .indices {
     width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .dashboard {

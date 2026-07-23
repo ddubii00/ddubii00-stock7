@@ -1,6 +1,6 @@
 const state = {
   koreaMap: null,
-  koreaMarket: "KRX300",
+  koreaMarket: "KOSPI",
   koreaTerm: "1day",
   koreaSector: "",
   timers: [],
@@ -22,6 +22,11 @@ const elements = {
   kosdaqIndex: document.getElementById("kosdaqIndex"),
   usdKrwIndex: document.getElementById("usdKrwIndex"),
   nasdaqIndex: document.getElementById("nasdaqIndex"),
+  topSp500Index: document.getElementById("topSp500Index"),
+  panelKospiIndex: document.getElementById("panelKospiIndex"),
+  panelKosdaqIndex: document.getElementById("panelKosdaqIndex"),
+  panelNasdaqIndex: document.getElementById("panelNasdaqIndex"),
+  sp500Index: document.getElementById("sp500Index"),
   refreshLabel: document.getElementById("refreshLabel"),
   koreaTitle: document.getElementById("koreaTitle"),
   koreaSubtitle: document.getElementById("koreaSubtitle"),
@@ -44,6 +49,7 @@ const priceFormat = new Intl.NumberFormat("ko-KR", {
 });
 
 function number(value, digits = 2) {
+  if (value == null || value === "") return "--";
   const num = Number(value);
   if (!Number.isFinite(num)) return "--";
   return num.toLocaleString("ko-KR", {
@@ -53,12 +59,14 @@ function number(value, digits = 2) {
 }
 
 function compact(value) {
+  if (value == null || value === "") return "--";
   const num = Number(value);
   if (!Number.isFinite(num)) return "--";
   return nf.format(Math.round(num));
 }
 
 function compactWon(value) {
+  if (value == null || value === "") return "--";
   const num = Number(value);
   if (!Number.isFinite(num)) return "--";
   if (num >= 10000) return `${number(num / 10000, 1)}조원`;
@@ -66,6 +74,7 @@ function compactWon(value) {
 }
 
 function signed(value, digits = 2) {
+  if (value == null || value === "") return "--";
   const num = Number(value);
   if (!Number.isFinite(num)) return "--";
   const sign = num > 0 ? "+" : "";
@@ -73,6 +82,7 @@ function signed(value, digits = 2) {
 }
 
 function directionClass(value) {
+  if (value == null || value === "") return "neutral";
   const num = Number(value);
   if (num > 0) return "positive";
   if (num < 0) return "negative";
@@ -98,7 +108,8 @@ async function getJson(url) {
   });
 }
 
-function setIndex(el, index) {
+function setIndex(el, index = {}) {
+  if (!el) return;
   const close = el.querySelector("strong");
   const change = el.querySelector(".index-change");
   close.textContent = index.available ? number(index.close, 2) : "--";
@@ -110,13 +121,28 @@ function setIndex(el, index) {
 }
 
 async function refreshIndices() {
-  const data = await getJson("/api/indices");
-  setIndex(elements.kospiIndex, data.kospi);
-  setIndex(elements.kosdaqIndex, data.kosdaq);
-  setIndex(elements.usdKrwIndex, data.usdkrw);
-  setIndex(elements.nasdaqIndex, data.nasdaq);
+  try {
+    const data = await getJson("/api/indices");
+    const kospi = data.kospi || {};
+    const kosdaq = data.kosdaq || {};
+    const usdkrw = data.usdkrw || {};
+    const nasdaq = data.nasdaq || {};
+    const sp500 = data.sp500 || {};
 
-  document.title = `KOSPI ${number(data.kospi.close, 2)} (${signed(data.kospi.changeRate, 2)}%, ${signed(data.kospi.change, 2)}) | KOSDAQ ${number(data.kosdaq.close, 2)} (${signed(data.kosdaq.changeRate, 2)}%, ${signed(data.kosdaq.change, 2)}) | USD/KRW ${number(data.usdkrw.close, 2)} | Nasdaq ${number(data.nasdaq.close, 2)} (${signed(data.nasdaq.changeRate, 2)}%, ${signed(data.nasdaq.change, 2)})`;
+    setIndex(elements.kospiIndex, kospi);
+    setIndex(elements.kosdaqIndex, kosdaq);
+    setIndex(elements.usdKrwIndex, usdkrw);
+    setIndex(elements.nasdaqIndex, nasdaq);
+    setIndex(elements.topSp500Index, sp500);
+    setIndex(elements.panelKospiIndex, kospi);
+    setIndex(elements.panelKosdaqIndex, kosdaq);
+    setIndex(elements.panelNasdaqIndex, nasdaq);
+    setIndex(elements.sp500Index, sp500);
+
+    document.title = `KOSPI ${number(kospi.close, 2)} (${signed(kospi.changeRate, 2)}%, ${signed(kospi.change, 2)}) | KOSDAQ ${number(kosdaq.close, 2)} (${signed(kosdaq.changeRate, 2)}%, ${signed(kosdaq.change, 2)}) | Nasdaq ${number(nasdaq.close, 2)} (${signed(nasdaq.changeRate, 2)}%, ${signed(nasdaq.change, 2)}) | S&P500 ${number(sp500.close, 2)} (${signed(sp500.changeRate, 2)}%, ${signed(sp500.change, 2)})`;
+  } catch (error) {
+    elements.refreshLabel.textContent = "지수 데이터를 불러오지 못했습니다. 새로고침을 눌러 다시 시도하세요.";
+  }
 }
 
 function worst(row, side) {
@@ -216,7 +242,8 @@ function findKoreaStock(key) {
 
 function koreaSubtitle(market) {
   if (market === "KRX300") return `KOSPD KRX 300 ${KOSPD_TERMS[state.koreaTerm] || "1일"} 맵`;
-  return `한국경제 ${market} 마켓맵`;
+  if (state.koreaTerm === "1day") return `한국경제 ${market} 1일 맵`;
+  return `KOSPD ${market} ${KOSPD_TERMS[state.koreaTerm] || "1일"} 맵`;
 }
 
 function getVisibleSectors(data) {
@@ -546,6 +573,10 @@ function stat(label, value) {
   return `<div class="stat"><span>${label}</span><strong>${value}</strong></div>`;
 }
 
+function firstPresent(...values) {
+  return values.find((value) => value != null && value !== "" && Number.isFinite(Number(value)));
+}
+
 function openKoreaStockFromTile(stock) {
   const kospdUrl = `https://www.kospd.com/maps/${state.koreaTerm}`;
   if (stock.shcode) {
@@ -556,7 +587,7 @@ function openKoreaStockFromTile(stock) {
   showModal(`
     <div class="stock-popup">
       <h3 id="modalTitle">${stock.name}</h3>
-      <p class="sub">${state.koreaMarket} · KOSPD 1일 맵</p>
+      <p class="sub">${state.koreaMarket} · ${KOSPD_TERMS[state.koreaTerm] || "1일"} 맵</p>
       <div class="price-line">
         <strong>${compact(stock.close)}</strong>
         <span class="${directionClass(stock.chgrate)}">${signed(stock.chgrate, 2)}%</span>
@@ -577,14 +608,17 @@ async function openKoreaStock(code, fallback) {
     const stock = data.stock || {};
     const trader = stock.stock_trader || {};
     const consensus = data.consensus?.latest;
+    const displayPrice = firstPresent(trader.curprc, stock.close_1dy, fallback.close);
+    const displayChange = firstPresent(trader.chgprc, fallback.chgprc);
+    const displayRate = firstPresent(trader.chgrate, fallback.chgrate);
 
     showModal(`
       <div class="stock-popup">
         <h3 id="modalTitle">${stock.shname || fallback.name}</h3>
         <p class="sub">${stock.shcode || code} · ${stock.ename || "KOSPI"}</p>
         <div class="price-line">
-          <strong>${priceFormat.format(Number(trader.curprc || stock.close_1dy || fallback.close || 0))}</strong>
-          <span class="${directionClass(trader.chgprc)}">${signed(trader.chgprc, 0)} (${signed(trader.chgrate, 2)}%)</span>
+          <strong>${displayPrice == null ? "--" : priceFormat.format(Number(displayPrice))}</strong>
+          <span class="${directionClass(displayChange)}">${signed(displayChange, 0)} (${signed(displayRate, 2)}%)</span>
         </div>
         <div class="stat-grid">
           ${stat("시가", compact(trader.openprc))}
@@ -613,7 +647,7 @@ async function openUsStock(ticker) {
     showModal(`
       <div class="stock-popup">
         <h3 id="modalTitle">${data.ticker}</h3>
-        <p class="sub">US stock · ${quote.date || "Stooq"}</p>
+        <p class="sub">${data.ticker} · US stock · ${quote.date || "Stooq"}</p>
         <div class="price-line">
           <strong>${number(quote.close, 2)}</strong>
           <span class="${directionClass(quote.change)}">${signed(quote.change, 2)} (${signed(quote.changeRate, 2)}%)</span>
