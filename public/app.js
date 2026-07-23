@@ -23,10 +23,6 @@ const elements = {
   usdKrwIndex: document.getElementById("usdKrwIndex"),
   nasdaqIndex: document.getElementById("nasdaqIndex"),
   topSp500Index: document.getElementById("topSp500Index"),
-  panelKospiIndex: document.getElementById("panelKospiIndex"),
-  panelKosdaqIndex: document.getElementById("panelKosdaqIndex"),
-  panelNasdaqIndex: document.getElementById("panelNasdaqIndex"),
-  sp500Index: document.getElementById("sp500Index"),
   refreshLabel: document.getElementById("refreshLabel"),
   koreaTitle: document.getElementById("koreaTitle"),
   koreaSubtitle: document.getElementById("koreaSubtitle"),
@@ -134,10 +130,6 @@ async function refreshIndices() {
     setIndex(elements.usdKrwIndex, usdkrw);
     setIndex(elements.nasdaqIndex, nasdaq);
     setIndex(elements.topSp500Index, sp500);
-    setIndex(elements.panelKospiIndex, kospi);
-    setIndex(elements.panelKosdaqIndex, kosdaq);
-    setIndex(elements.panelNasdaqIndex, nasdaq);
-    setIndex(elements.sp500Index, sp500);
 
     document.title = `KOSPI ${number(kospi.close, 2)} (${signed(kospi.changeRate, 2)}%, ${signed(kospi.change, 2)}) | KOSDAQ ${number(kosdaq.close, 2)} (${signed(kosdaq.changeRate, 2)}%, ${signed(kosdaq.change, 2)}) | Nasdaq ${number(nasdaq.close, 2)} (${signed(nasdaq.changeRate, 2)}%, ${signed(nasdaq.change, 2)}) | S&P500 ${number(sp500.close, 2)} (${signed(sp500.changeRate, 2)}%, ${signed(sp500.change, 2)})`;
   } catch (error) {
