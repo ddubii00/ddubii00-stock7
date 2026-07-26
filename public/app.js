@@ -100,7 +100,7 @@ async function getJson(url) {
     const request = new XMLHttpRequest();
     request.open("GET", `${url}${url.includes("?") ? "&" : "?"}ts=${Date.now()}`, true);
     request.responseType = "json";
-    request.timeout = 15000;
+    request.timeout = 45000;
     request.onload = () => {
       if (request.status >= 200 && request.status < 300) {
         resolve(request.response || JSON.parse(request.responseText));
