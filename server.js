@@ -683,6 +683,97 @@ async function fetchTradingViewStockQuote(symbol) {
   };
 }
 
+async function fetchTradingViewUsMap() {
+  const columns = ["name", "description", "sector", "close", "change", "change_abs", "volume", "market_cap_basic"];
+  const data = await fetchJson(
+    "https://scanner.tradingview.com/america/scan",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://www.tradingview.com",
+        Referer: "https://www.tradingview.com/",
+      },
+      body: JSON.stringify({
+        options: { lang: "en" },
+        symbols: { query: { types: ["stock"] }, tickers: [] },
+        columns,
+        sort: { sortBy: "market_cap_basic", sortOrder: "desc" },
+        range: [0, 900],
+      }),
+      timeout: 16000,
+    },
+    15000
+  );
+
+  const groups = new Map();
+  (data.data || []).forEach((row) => {
+    const values = row.d || [];
+    const ticker = String(row.s || "").split(":").pop()?.replace("-", ".") || values[0];
+    const exchange = String(row.s || "").split(":")[0] || "";
+    const sectorName = values[2] || "Other";
+    const description = values[1] || values[0] || ticker;
+    if (!["NASDAQ", "NYSE", "AMEX"].includes(exchange)) return;
+    if (/[/$]/.test(ticker)) return;
+    if (/preferred|depositary|warrant|right|unit|note|bond|debenture/i.test(description)) return;
+    const close = formatNumber(values[3]);
+    const rate = formatNumber(values[4]);
+    const change = formatNumber(values[5]);
+    const volume = formatNumber(values[6]);
+    const marketCap = formatNumber(values[7]);
+    if (!ticker || marketCap == null || close == null) return;
+
+    const group = groups.get(sectorName) || {
+      name: sectorName,
+      upcode: sectorName,
+      type: "industry",
+      children: [],
+    };
+    group.children.push({
+      shcode: ticker,
+      symbol: ticker,
+      name: description,
+      shortName: values[0] || ticker,
+      exchange,
+      value: marketCap,
+      marketCap,
+      chgrate: rate || 0,
+      chgprc: change,
+      date: "",
+      volume,
+      tradingValue: tradingValueUsd(close, volume),
+      close,
+      previous: close != null && change != null ? close - change : null,
+      sourceMarket: "US",
+      fill: kospdHeatColor(rate),
+      type: "stock",
+    });
+    groups.set(sectorName, group);
+  });
+
+  const children = Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      children: group.children.sort((a, b) => b.value - a.value),
+    }))
+    .filter((group) => group.children.length)
+    .sort(
+      (a, b) =>
+        b.children.reduce((sum, stock) => sum + stock.value, 0) -
+        a.children.reduce((sum, stock) => sum + stock.value, 0)
+    );
+
+  return {
+    name: "US Stock Heat Map",
+    header: "1day",
+    id: "US-STOCKS-1DAY",
+    symbol: "US",
+    source: "TradingView",
+    children,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 function tradingViewIndex(name, quotes, symbol) {
   const row = quotes.get(symbol);
   if (!row) {
@@ -771,6 +862,10 @@ async function getUsStock(res, ticker) {
     quote,
     finvizUrl: `https://finviz.com/quote.ashx?t=${encodeURIComponent(symbol)}&p=d`,
   });
+}
+
+async function getUsMap(res) {
+  sendJson(res, 200, await fetchTradingViewUsMap());
 }
 
 async function getFinvizMap(res) {
@@ -1186,6 +1281,11 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname.startsWith("/api/us-stock/")) {
       await getUsStock(res, decodeURIComponent(url.pathname.split("/").pop()));
+      return;
+    }
+
+    if (url.pathname === "/api/us-map") {
+      await getUsMap(res);
       return;
     }
 

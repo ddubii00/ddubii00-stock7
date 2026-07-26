@@ -1,8 +1,10 @@
 const state = {
   koreaMap: null,
+  usMap: null,
   koreaMarket: "KOSPI",
   koreaTerm: "1day",
   koreaSector: "",
+  usSector: "",
   koreaQuoteCache: new Map(),
   usQuoteCache: new Map(),
   tooltipKey: "",
@@ -31,12 +33,16 @@ const elements = {
   refreshLabel: document.getElementById("refreshLabel"),
   koreaTitle: document.getElementById("koreaTitle"),
   koreaSubtitle: document.getElementById("koreaSubtitle"),
+  usTitle: document.getElementById("usTitle"),
+  usSubtitle: document.getElementById("usSubtitle"),
   koreaMap: document.getElementById("koreaMap"),
   koreaLoading: document.getElementById("koreaLoading"),
   usMap: document.getElementById("usMap"),
+  usLoading: document.getElementById("usLoading"),
   refreshKorea: document.getElementById("refreshKorea"),
   refreshUs: document.getElementById("refreshUs"),
   sectorBack: document.getElementById("sectorBack"),
+  usSectorBack: document.getElementById("usSectorBack"),
   marketSegments: document.querySelectorAll("[data-market]"),
   termSegments: document.querySelectorAll("[data-term]"),
   modalBackdrop: document.getElementById("modalBackdrop"),
@@ -248,6 +254,16 @@ function flattenKoreaStocks(data) {
   return stocks;
 }
 
+function flattenUsStocks(data) {
+  const stocks = new Map();
+  (data.children || []).forEach((sector) => {
+    (sector.children || []).forEach((stock) => {
+      stocks.set(stockKey(stock), stock);
+    });
+  });
+  return stocks;
+}
+
 function stockKey(stock) {
   return stock.shcode || stock.name || "";
 }
@@ -255,6 +271,11 @@ function stockKey(stock) {
 function findKoreaStock(key) {
   if (!state.koreaMap) return null;
   return flattenKoreaStocks(state.koreaMap).get(key) || null;
+}
+
+function findUsStock(key) {
+  if (!state.usMap) return null;
+  return flattenUsStocks(state.usMap).get(key) || null;
 }
 
 function koreaSubtitle(market) {
@@ -269,6 +290,12 @@ function getVisibleSectors(data) {
   return sectors.filter((sector) => sector.name === state.koreaSector);
 }
 
+function getVisibleUsSectors(data) {
+  const sectors = data.children || [];
+  if (!state.usSector) return sectors;
+  return sectors.filter((sector) => sector.name === state.usSector);
+}
+
 function updateKoreaHeader() {
   elements.koreaTitle.textContent = state.koreaSector
     ? `${state.koreaMarket} / ${state.koreaSector}`
@@ -277,6 +304,14 @@ function updateKoreaHeader() {
   elements.koreaMap.setAttribute("aria-label", `${state.koreaMarket} 종목 마켓맵`);
   elements.koreaLoading.textContent = `${state.koreaMarket} 맵을 불러오는 중`;
   elements.sectorBack.hidden = !state.koreaSector;
+}
+
+function updateUsHeader() {
+  elements.usTitle.textContent = state.usSector ? `US Stocks / ${state.usSector}` : "US Stocks";
+  elements.usSubtitle.textContent = state.usSector ? `${state.usSector} 섹터 1일 맵` : "미국 주식 1일 맵";
+  elements.usMap.setAttribute("aria-label", state.usSector ? `미국 ${state.usSector} 섹터 마켓맵` : "미국 주식 마켓맵");
+  elements.usLoading.textContent = "미국 주식 맵을 불러오는 중";
+  elements.usSectorBack.hidden = !state.usSector;
 }
 
 function renderKoreaMap(data) {
@@ -410,6 +445,117 @@ function warmKoreaTooltipData() {
   };
 
   [runNext(), runNext(), runNext(), runNext()];
+}
+
+function renderUsMap(data) {
+  state.usMap = data;
+  const host = elements.usMap;
+  host.innerHTML = "";
+  hideTooltip();
+  updateUsHeader();
+
+  const width = host.clientWidth;
+  const height = host.clientHeight;
+  const sectors = getVisibleUsSectors(data);
+  const maxStockValue = Math.max(
+    1,
+    ...sectors.flatMap((sector) => (sector.children || []).map((stock) => Number(stock.value) || 0))
+  );
+  const sectorItems = sectors.map((sector) => ({
+    ...sector,
+    value: (sector.children || []).reduce((sum, stock) => sum + (Number(stock.value) || 0), 0),
+    children: (sector.children || []).map((stock) => ({ ...stock })),
+  }));
+
+  squarify(sectorItems, { x: 0, y: 0, w: width, h: height }).forEach((sectorLayout) => {
+    const sector = sectorLayout.item;
+    const sectorEl = document.createElement("div");
+    sectorEl.className = "sector";
+    sectorEl.style.left = `${sectorLayout.x}px`;
+    sectorEl.style.top = `${sectorLayout.y}px`;
+    sectorEl.style.width = `${sectorLayout.w}px`;
+    sectorEl.style.height = `${sectorLayout.h}px`;
+
+    const label = document.createElement("button");
+    label.type = "button";
+    label.className = "sector-label";
+    label.textContent = state.usSector ? `${sector.name} 전체` : sector.name;
+    label.title = state.usSector ? "전체 맵으로 돌아가기" : `${sector.name} 섹터로 들어가기`;
+    label.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (state.usSector) {
+        clearUsSector();
+      } else {
+        setUsSector(sector.name);
+      }
+    });
+    sectorEl.append(label);
+
+    const pad = 4;
+    const header = sectorLayout.h > 44 ? 24 : 0;
+    const inner = {
+      x: pad,
+      y: header,
+      w: Math.max(0, sectorLayout.w - pad * 2),
+      h: Math.max(0, sectorLayout.h - header - pad),
+    };
+
+    squarify(sector.children || [], inner).forEach((stockLayout) => {
+      const stock = stockLayout.item;
+      const tile = document.createElement("button");
+      tile.type = "button";
+      tile.className = "tile";
+      tile.dataset.key = stockKey(stock);
+      tile.style.left = `${stockLayout.x}px`;
+      tile.style.top = `${stockLayout.y}px`;
+      tile.style.width = `${stockLayout.w}px`;
+      tile.style.height = `${stockLayout.h}px`;
+      tile.style.background = stock.fill || (stock.chgrate >= 0 ? "#bd3945" : "#4162c4");
+      tile.title = `${stock.shortName || stock.symbol || stock.shcode || stock.name} ${signed(stock.chgrate, 2)}%`;
+
+      const valueScale = Math.max(0, Math.min(1, Math.sqrt((Number(stock.value) || 0) / maxStockValue)));
+      const areaScale = Math.max(0, Math.min(1, (stockLayout.w * stockLayout.h) / 80000));
+      const labelScale = Math.max(valueScale, Math.sqrt(areaScale) * 0.72);
+      const nameFont = Math.round(8 + labelScale * 30);
+      const rateFont = Math.round(7 + labelScale * 15);
+      tile.style.setProperty("--tile-font", `${nameFont}px`);
+      tile.style.setProperty("--tile-rate-font", `${rateFont}px`);
+      tile.addEventListener("click", () => openUsStock((findUsStock(tile.dataset.key) || stock).shcode));
+      tile.addEventListener("mouseenter", (event) => showUsStockTooltip(event, findUsStock(tile.dataset.key) || stock));
+      tile.addEventListener("mousemove", (event) => moveTooltip(event));
+      tile.addEventListener("mouseleave", hideTooltip);
+
+      if (tileFontVisible(stockLayout, labelScale)) {
+        const name = document.createElement("span");
+        name.className = "tile-name";
+        name.textContent = stock.shortName || stock.symbol || stock.shcode || stock.name;
+        tile.append(name);
+        if (stockLayout.w * stockLayout.h > 1050 && stockLayout.h > 30) {
+          const rate = document.createElement("span");
+          rate.className = "tile-rate";
+          rate.textContent = `${signed(stock.chgrate, 2)}%`;
+          tile.append(rate);
+        }
+      }
+
+      sectorEl.append(tile);
+    });
+
+    host.append(sectorEl);
+  });
+}
+
+function updateUsMapData(data) {
+  state.usMap = data;
+  const stocks = flattenUsStocks(data);
+  elements.usMap.querySelectorAll(".tile").forEach((tile) => {
+    const stock = stocks.get(tile.dataset.key);
+    if (!stock) return;
+    tile.style.background = stock.fill || (stock.chgrate >= 0 ? "#bd3945" : "#4162c4");
+    tile.title = `${stock.shortName || stock.shcode || stock.name} ${signed(stock.chgrate, 2)}%`;
+    const rate = tile.querySelector(".tile-rate");
+    if (rate) rate.textContent = `${signed(stock.chgrate, 2)}%`;
+  });
 }
 
 function updateKoreaMapData(data) {
@@ -601,26 +747,25 @@ function renderUsTooltip(symbol, data = {}) {
   positionTooltip(state.tooltipX, state.tooltipY);
 }
 
-function showUsTooltip(message) {
-  const symbol = message.symbol || "";
+function showUsStockTooltip(event, stock) {
+  const symbol = stock.shcode || stock.symbol || stock.shortName || "";
   if (!symbol) return;
-  const iframeRect = elements.usMap.getBoundingClientRect();
   state.tooltipKey = `US:${symbol}`;
-  state.tooltipX = iframeRect.left + Number(message.x || 0);
-  state.tooltipY = iframeRect.top + Number(message.y || 0);
-
-  const parsed = parseUsHoverText(message.text, symbol);
+  state.tooltipX = event.clientX;
+  state.tooltipY = event.clientY;
   const cached = state.usQuoteCache.get(symbol);
   const base = {
-    name: parsed.name,
-    price: parsed.price,
-    close: parsed.price ? Number(String(parsed.price).replace(/,/g, "")) : null,
-    rate: parsed.rate,
+    name: stock.name || symbol,
+    close: stock.close,
+    rate: stock.chgrate,
+    tradingValue: stock.tradingValue,
+    marketCap: stock.value || stock.marketCap,
+    exchange: stock.exchange,
   };
   if (cached && !cached.pending) mergeDefined(base, cached);
   renderUsTooltip(symbol, base);
 
-  if (cached) return;
+  if (cached || (base.close != null && base.marketCap != null && base.tradingValue != null)) return;
   state.usQuoteCache.set(symbol, { pending: true });
   getJson(`/api/us-stock/${encodeURIComponent(symbol)}`)
     .then((data) => {
@@ -667,8 +812,39 @@ function hideTooltip() {
   if (tooltip) tooltip.hidden = true;
 }
 
-function reloadUsMap() {
-  elements.usMap.src = `/finviz-map?ts=${Date.now()}`;
+async function refreshUsMap({ forceRender = false, showLoading = false } = {}) {
+  if (showLoading) elements.usLoading.hidden = false;
+  try {
+    const data = await getJson("/api/us-map");
+    if (forceRender || !state.usMap || !elements.usMap.querySelector(".tile")) {
+      renderUsMap(data);
+    } else {
+      updateUsMapData(data);
+    }
+    elements.usLoading.hidden = true;
+  } catch (error) {
+    elements.usLoading.hidden = false;
+    elements.usLoading.innerHTML = `
+      <div class="load-error">
+        <strong>미국 히트맵을 불러오지 못했습니다.</strong>
+        <button type="button" id="retryUsMap">다시 불러오기</button>
+      </div>
+    `;
+    document.getElementById("retryUsMap")?.addEventListener("click", () => {
+      elements.usLoading.textContent = "미국 주식 맵을 불러오는 중";
+      refreshUsMap({ forceRender: true, showLoading: true });
+    });
+  }
+}
+
+function setUsSector(sectorName) {
+  state.usSector = sectorName;
+  renderUsMap(state.usMap);
+}
+
+function clearUsSector() {
+  state.usSector = "";
+  renderUsMap(state.usMap);
 }
 
 function isMarketOpen(zone, openHour, openMinute, closeHour, closeMinute) {
@@ -731,7 +907,7 @@ function resetTimers() {
 }
 
 async function refreshAll() {
-  await Promise.allSettled([refreshIndices(), refreshKoreaMap()]);
+  await Promise.allSettled([refreshIndices(), refreshKoreaMap(), refreshUsMap()]);
 }
 
 function checkKoreaFinalRefresh() {
@@ -860,8 +1036,9 @@ elements.refreshKorea.addEventListener("click", () => {
 elements.sectorBack.addEventListener("click", clearKoreaSector);
 elements.refreshUs.addEventListener("click", () => {
   refreshIndices();
-  reloadUsMap();
+  refreshUsMap({ forceRender: true, showLoading: true });
 });
+elements.usSectorBack.addEventListener("click", clearUsSector);
 elements.modalClose.addEventListener("click", hideModal);
 elements.modalBackdrop.addEventListener("click", (event) => {
   if (event.target === elements.modalBackdrop) hideModal();
@@ -871,20 +1048,7 @@ window.addEventListener("keydown", (event) => {
 });
 window.addEventListener("resize", () => {
   if (state.koreaMap) renderKoreaMap(state.koreaMap);
-});
-window.addEventListener("message", (event) => {
-  if (event.data?.type === "stock-click" && event.data.market === "US") {
-    openUsStock(event.data.symbol);
-  }
-  if (event.data?.type === "stock-hover" && event.data.market === "US") {
-    showUsTooltip(event.data);
-  }
-  if (event.data?.type === "stock-hover-end" && event.data.market === "US") {
-    hideTooltip();
-  }
-  if (event.data?.type === "iframe-wheel") {
-    window.scrollBy({ top: event.data.deltaY, left: 0, behavior: "auto" });
-  }
+  if (state.usMap) renderUsMap(state.usMap);
 });
 elements.marketSegments.forEach((button) => {
   button.addEventListener("click", () => setKoreaMarket(button.dataset.market));
