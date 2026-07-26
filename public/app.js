@@ -3,6 +3,11 @@ const state = {
   koreaMarket: "KOSPI",
   koreaTerm: "1day",
   koreaSector: "",
+  koreaQuoteCache: new Map(),
+  usQuoteCache: new Map(),
+  tooltipKey: "",
+  tooltipX: 0,
+  tooltipY: 0,
   timers: [],
   finalKoreaRefreshKey: "",
 };
@@ -67,6 +72,16 @@ function compactWon(value) {
   if (!Number.isFinite(num)) return "--";
   if (num >= 10000) return `${number(num / 10000, 1)}조원`;
   return `${compact(num)}억원`;
+}
+
+function compactUsd(value) {
+  if (value == null || value === "") return "--";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "--";
+  if (num >= 1_000_000_000_000) return `$${number(num / 1_000_000_000_000, 1)}T`;
+  if (num >= 1_000_000_000) return `$${number(num / 1_000_000_000, 1)}B`;
+  if (num >= 1_000_000) return `$${number(num / 1_000_000, 1)}M`;
+  return `$${compact(num)}`;
 }
 
 function signed(value, digits = 2) {
@@ -451,7 +466,15 @@ function ensureTooltip() {
   return tooltip;
 }
 
-function showKoreaTooltip(event, stock) {
+function mergeDefined(target, source = {}) {
+  Object.entries(source).forEach(([key, value]) => {
+    if (value == null || value === "") return;
+    target[key] = value;
+  });
+  return target;
+}
+
+function renderKoreaTooltip(stock) {
   const tooltip = ensureTooltip();
   tooltip.innerHTML = `
     <div class="tooltip-title">
@@ -469,7 +492,42 @@ function showKoreaTooltip(event, stock) {
     </div>
   `;
   tooltip.hidden = false;
-  moveTooltip(event);
+  positionTooltip(state.tooltipX, state.tooltipY);
+}
+
+function needsKoreaEnrichment(stock) {
+  return !stock.shcode || stock.close == null || stock.volume == null || stock.volume === "";
+}
+
+function showKoreaTooltip(event, stock) {
+  const requestKey = `KR:${stockKey(stock)}`;
+  state.tooltipKey = requestKey;
+  state.tooltipX = event.clientX;
+  state.tooltipY = event.clientY;
+  renderKoreaTooltip(stock);
+
+  if (!stock?.name || !needsKoreaEnrichment(stock)) return;
+  const cacheKey = stock.name;
+  const cached = state.koreaQuoteCache.get(cacheKey);
+  if (cached && !cached.pending) {
+    mergeDefined(stock, cached);
+    renderKoreaTooltip(stock);
+    return;
+  }
+  if (cached?.pending) return;
+
+  state.koreaQuoteCache.set(cacheKey, { pending: true });
+  getJson(`/api/korea-stock-name/${encodeURIComponent(stock.name)}`)
+    .then((data) => {
+      const enriched = data.stock || {};
+      state.koreaQuoteCache.set(cacheKey, enriched);
+      const liveStock = findKoreaStock(stockKey(stock)) || findKoreaStock(stock.name) || stock;
+      mergeDefined(liveStock, enriched);
+      if (state.tooltipKey === requestKey) renderKoreaTooltip(liveStock);
+    })
+    .catch(() => {
+      state.koreaQuoteCache.delete(cacheKey);
+    });
 }
 
 function parseUsHoverText(text, symbol) {
@@ -486,32 +544,70 @@ function parseUsHoverText(text, symbol) {
   };
 }
 
-function showUsTooltip(message) {
-  const symbol = message.symbol || "";
-  if (!symbol) return;
-  const data = parseUsHoverText(message.text, symbol);
+function renderUsTooltip(symbol, data = {}) {
   const tooltip = ensureTooltip();
   tooltip.innerHTML = `
     <div class="tooltip-title">
       <strong>${escapeHtml(symbol)}</strong>
-      <span>${escapeHtml(data.name === symbol ? "" : data.name)}</span>
+      <span>${escapeHtml(data.name && data.name !== symbol ? data.name : "")}</span>
     </div>
-    <div class="tooltip-sub">US · Finviz S&P 500 맵</div>
+    <div class="tooltip-sub">US · ${escapeHtml(data.exchange || "Finviz S&P 500 맵")}</div>
     <div class="tooltip-price">
-      <strong>${data.price ? escapeHtml(data.price) : "--"}</strong>
+      <strong>${data.close != null ? `$${number(data.close, 2)}` : data.price ? escapeHtml(data.price) : "--"}</strong>
       <span class="${directionClass(data.rate)}">${data.rate == null ? "--" : `${signed(data.rate, 2)}%`}</span>
     </div>
     <div class="tooltip-grid">
-      <div class="tooltip-row"><span>티커</span><strong>${escapeHtml(symbol)}</strong></div>
-      <div class="tooltip-row"><span>등락률</span><strong class="${directionClass(data.rate)}">${data.rate == null ? "--" : `${signed(data.rate, 2)}%`}</strong></div>
+      <div class="tooltip-row"><span>시가총액</span><strong>${compactUsd(data.marketCap)}</strong></div>
+      <div class="tooltip-row"><span>거래량</span><strong>${compact(data.volume)}</strong></div>
     </div>
   `;
   tooltip.hidden = false;
+  positionTooltip(state.tooltipX, state.tooltipY);
+}
+
+function showUsTooltip(message) {
+  const symbol = message.symbol || "";
+  if (!symbol) return;
   const iframeRect = elements.usMap.getBoundingClientRect();
-  positionTooltip(iframeRect.left + Number(message.x || 0), iframeRect.top + Number(message.y || 0));
+  state.tooltipKey = `US:${symbol}`;
+  state.tooltipX = iframeRect.left + Number(message.x || 0);
+  state.tooltipY = iframeRect.top + Number(message.y || 0);
+
+  const parsed = parseUsHoverText(message.text, symbol);
+  const cached = state.usQuoteCache.get(symbol);
+  const base = {
+    name: parsed.name,
+    price: parsed.price,
+    close: parsed.price ? Number(String(parsed.price).replace(/,/g, "")) : null,
+    rate: parsed.rate,
+  };
+  if (cached && !cached.pending) mergeDefined(base, cached);
+  renderUsTooltip(symbol, base);
+
+  if (cached) return;
+  state.usQuoteCache.set(symbol, { pending: true });
+  getJson(`/api/us-stock/${encodeURIComponent(symbol)}`)
+    .then((data) => {
+      const quote = data.quote || {};
+      const enriched = {
+        name: quote.name || symbol,
+        close: quote.close,
+        rate: quote.changeRate,
+        volume: quote.volume,
+        marketCap: quote.marketCap,
+        exchange: quote.exchange,
+      };
+      state.usQuoteCache.set(symbol, enriched);
+      if (state.tooltipKey === `US:${symbol}`) renderUsTooltip(symbol, mergeDefined(base, enriched));
+    })
+    .catch(() => {
+      state.usQuoteCache.delete(symbol);
+    });
 }
 
 function moveTooltip(event) {
+  state.tooltipX = event.clientX;
+  state.tooltipY = event.clientY;
   positionTooltip(event.clientX, event.clientY);
 }
 

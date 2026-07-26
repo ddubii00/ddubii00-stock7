@@ -40,7 +40,8 @@ function contentType(filePath) {
 }
 
 async function fetchText(url, options = {}, ttlMs = 0) {
-  const cached = cache.get(url);
+  const cacheKey = options.method || options.body ? `${url}|${options.method || "GET"}|${options.body || ""}` : url;
+  const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.time < ttlMs) {
     return cached.text;
   }
@@ -65,7 +66,7 @@ async function fetchText(url, options = {}, ttlMs = 0) {
 
     const text = await response.text();
     if (ttlMs > 0) {
-      cache.set(url, { text, time: Date.now() });
+      cache.set(cacheKey, { text, time: Date.now() });
     }
     return text;
   } finally {
@@ -415,6 +416,61 @@ async function getKoreaStock(res, code) {
   sendJson(res, 200, data);
 }
 
+function normalizeKoreaStockSnapshot(stock = {}, fallback = {}) {
+  const trader = stock.stock_trader || fallback.stock_trader || {};
+  return {
+    shcode: stock.shcode || fallback.shcode || "",
+    name: stock.shname || stock.name || fallback.shname || fallback.name || "",
+    value: formatNumber(trader.mkt_cap ?? stock.mkt_cap ?? fallback.mkt_cap ?? fallback.value),
+    chgrate: formatNumber(trader.chgrate ?? fallback.chgrate),
+    chgprc: formatNumber(trader.chgprc ?? fallback.chgprc),
+    date: trader.workdate || stock.workdate || fallback.workdate || fallback.date || "",
+    volume: formatNumber(trader.volume ?? stock.prevol ?? fallback.prevol ?? fallback.volume),
+    close: formatNumber(trader.curprc ?? stock.close_1dy ?? stock.baseprc ?? fallback.close_1dy ?? fallback.baseprc ?? fallback.close),
+    previous: formatNumber(stock.close_1dy ?? stock.preprice ?? stock.baseprc ?? fallback.close_1dy ?? fallback.preprice ?? fallback.previous),
+    open: formatNumber(trader.openprc ?? fallback.open),
+    high: formatNumber(trader.highprc ?? fallback.high),
+    low: formatNumber(trader.lowprc ?? fallback.low),
+  };
+}
+
+async function getKoreaStockByName(res, name) {
+  const target = String(name || "").trim();
+  if (!target || target.length > 40) {
+    sendJson(res, 400, { error: "잘못된 종목명입니다." });
+    return;
+  }
+
+  const normalizeName = (value) => String(value || "").replace(/\s+/g, "").toUpperCase();
+  const lookup = await getHankyungStockLookup();
+  const matched = lookup.get(target) ||
+    Array.from(lookup.values()).find((stock) => normalizeName(stock.shname || stock.name) === normalizeName(target));
+
+  if (!matched) {
+    sendJson(res, 404, { error: "종목을 찾지 못했습니다." });
+    return;
+  }
+
+  let detailStock = matched;
+  if (matched.shcode) {
+    try {
+      const detail = await fetchJson(
+        `https://markets.hankyung.com/api/v2/stock/${encodeURIComponent(matched.shcode)}/detail`,
+        { headers: hankyungHeaders(matched.sourceMarket || "KOSPI") },
+        2500
+      );
+      detailStock = detail.stock || matched;
+    } catch (error) {
+      detailStock = matched;
+    }
+  }
+
+  sendJson(res, 200, {
+    source: "Hankyung",
+    stock: normalizeKoreaStockSnapshot(detailStock, matched),
+  });
+}
+
 function parseStooqQuote(csv, symbol) {
   const parts = csv.trim().split(",");
   if (parts.length < 9 || parts.includes("N/D")) {
@@ -465,6 +521,41 @@ async function fetchTradingViewQuotes(tickers) {
     quotes.set(row.s, row.d || []);
   });
   return quotes;
+}
+
+async function fetchTradingViewStockQuote(symbol) {
+  const clean = symbol.toUpperCase().replace(".", "-");
+  const tickers = [`NASDAQ:${clean}`, `NYSE:${clean}`, `AMEX:${clean}`];
+  const data = await fetchJson(
+    "https://scanner.tradingview.com/america/scan",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://www.tradingview.com",
+        Referer: "https://www.tradingview.com/",
+      },
+      body: JSON.stringify({
+        symbols: { tickers },
+        columns: ["name", "close", "change", "change_abs", "volume", "market_cap_basic"],
+      }),
+    },
+    1500
+  );
+
+  const row = (data.data || []).find((item) => Array.isArray(item.d) && item.d[1] != null);
+  if (!row) return null;
+  const values = row.d || [];
+  return {
+    name: values[0] || symbol,
+    close: formatNumber(values[1]),
+    changeRate: formatNumber(values[2]),
+    change: formatNumber(values[3]),
+    volume: formatNumber(values[4]),
+    marketCap: formatNumber(values[5]),
+    exchange: String(row.s || "").split(":")[0],
+    available: true,
+  };
 }
 
 function tradingViewIndex(name, quotes, symbol) {
@@ -526,16 +617,31 @@ async function getUsStock(res, ticker) {
     return;
   }
 
-  const stooqSymbol = `${symbol.toLowerCase().replace(".", "-")}.us`;
-  const csv = await fetchText(
-    `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&f=sd2t2ohlcvp&e=csv`,
-    {},
-    2500
-  );
+  const [stooqResult, tvResult] = await Promise.allSettled([
+    fetchText(
+      `https://stooq.com/q/l/?s=${encodeURIComponent(`${symbol.toLowerCase().replace(".", "-")}.us`)}&f=sd2t2ohlcvp&e=csv`,
+      {},
+      2500
+    ),
+    fetchTradingViewStockQuote(symbol),
+  ]);
+  const stooqQuote = stooqResult.status === "fulfilled" ? parseStooqQuote(stooqResult.value, symbol) : { symbol, available: false };
+  const tvQuote = tvResult.status === "fulfilled" ? tvResult.value : null;
+  const quote = {
+    ...stooqQuote,
+    close: tvQuote?.close ?? stooqQuote.close,
+    change: tvQuote?.change ?? stooqQuote.change,
+    changeRate: tvQuote?.changeRate ?? stooqQuote.changeRate,
+    volume: tvQuote?.volume ?? stooqQuote.volume,
+    marketCap: tvQuote?.marketCap ?? null,
+    name: tvQuote?.name || symbol,
+    exchange: tvQuote?.exchange || "",
+    available: Boolean(tvQuote?.available || stooqQuote.available),
+  };
   sendJson(res, 200, {
     ticker: symbol,
-    source: "Stooq",
-    quote: parseStooqQuote(csv, symbol),
+    source: tvQuote ? "TradingView/Stooq" : "Stooq",
+    quote,
     finvizUrl: `https://finviz.com/quote.ashx?t=${encodeURIComponent(symbol)}&p=d`,
   });
 }
@@ -937,6 +1043,11 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname.startsWith("/api/korea-stock/")) {
       await getKoreaStock(res, decodeURIComponent(url.pathname.split("/").pop()));
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/korea-stock-name/")) {
+      await getKoreaStockByName(res, decodeURIComponent(url.pathname.split("/").pop()));
       return;
     }
 
