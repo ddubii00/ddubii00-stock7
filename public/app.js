@@ -475,6 +475,7 @@ function mergeDefined(target, source = {}) {
 }
 
 function renderKoreaTooltip(stock) {
+  const priceText = stock.close == null ? "조회 중" : compact(stock.close);
   const tooltip = ensureTooltip();
   tooltip.innerHTML = `
     <div class="tooltip-title">
@@ -483,12 +484,12 @@ function renderKoreaTooltip(stock) {
     </div>
     <div class="tooltip-sub">${state.koreaMarket} · ${stock.date || ""}</div>
     <div class="tooltip-price">
-      <strong>${compact(stock.close)}</strong>
+      <strong>${priceText}</strong>
       <span class="${directionClass(stock.chgrate)}">${signed(stock.chgrate, 2)}%</span>
     </div>
     <div class="tooltip-grid">
       <div class="tooltip-row"><span>시가총액</span><strong>${compactWon(stock.value)}</strong></div>
-      <div class="tooltip-row"><span>거래량</span><strong>${compact(stock.volume)}</strong></div>
+      <div class="tooltip-row"><span>거래대금</span><strong>${compactWon(stock.tradingValue)}</strong></div>
     </div>
   `;
   tooltip.hidden = false;
@@ -496,7 +497,7 @@ function renderKoreaTooltip(stock) {
 }
 
 function needsKoreaEnrichment(stock) {
-  return !stock.shcode || stock.close == null || stock.volume == null || stock.volume === "";
+  return !stock.shcode || stock.close == null || stock.tradingValue == null || stock.tradingValue === "";
 }
 
 function showKoreaTooltip(event, stock) {
@@ -547,6 +548,7 @@ function parseUsHoverText(text, symbol) {
 function renderUsTooltip(symbol, data = {}) {
   const displayName = data.name && data.name !== symbol ? data.name : symbol;
   const subParts = ["US", data.exchange, data.date].filter(Boolean);
+  const priceText = data.close != null ? `$${number(data.close, 2)}` : data.price ? escapeHtml(data.price) : "조회 중";
   const tooltip = ensureTooltip();
   tooltip.innerHTML = `
     <div class="tooltip-title">
@@ -555,12 +557,12 @@ function renderUsTooltip(symbol, data = {}) {
     </div>
     <div class="tooltip-sub">${escapeHtml(subParts.join(" · "))}</div>
     <div class="tooltip-price">
-      <strong>${data.close != null ? `$${number(data.close, 2)}` : data.price ? escapeHtml(data.price) : "--"}</strong>
+      <strong>${priceText}</strong>
       <span class="${directionClass(data.rate)}">${data.rate == null ? "--" : `${signed(data.rate, 2)}%`}</span>
     </div>
     <div class="tooltip-grid">
       <div class="tooltip-row"><span>시가총액</span><strong>${compactUsd(data.marketCap)}</strong></div>
-      <div class="tooltip-row"><span>거래량</span><strong>${compact(data.volume)}</strong></div>
+      <div class="tooltip-row"><span>거래대금</span><strong>${compactUsd(data.tradingValue)}</strong></div>
     </div>
   `;
   tooltip.hidden = false;
@@ -597,6 +599,7 @@ function showUsTooltip(message) {
         close: quote.close,
         rate: quote.changeRate,
         volume: quote.volume,
+        tradingValue: quote.tradingValue,
         marketCap: quote.marketCap,
         exchange: quote.exchange,
       };
@@ -744,7 +747,7 @@ function openKoreaStockFromTile(stock) {
       </div>
       <div class="stat-grid">
         ${stat("시가총액", compactWon(stock.value))}
-        ${stat("거래량", compact(stock.volume))}
+        ${stat("거래대금", compactWon(stock.tradingValue))}
       </div>
       <a class="link-button" href="${kospdUrl}" target="_blank" rel="noreferrer">KOSPD에서 보기</a>
     </div>
@@ -774,7 +777,7 @@ async function openKoreaStock(code, fallback) {
           ${stat("시가", compact(trader.openprc))}
           ${stat("고가", compact(trader.highprc))}
           ${stat("저가", compact(trader.lowprc))}
-          ${stat("거래량", compact(trader.volume || fallback.volume))}
+          ${stat("거래대금", compactWon(fallback.tradingValue || ((displayPrice != null && (trader.volume || fallback.volume)) ? (Number(displayPrice) * Number(trader.volume || fallback.volume)) / 100000000 : null)))}
           ${stat("PER", stock.per || "--")}
           ${stat("PBR", stock.pbr || "--")}
           ${stat("시가총액", stock.mkt_cap ? `${compact(stock.mkt_cap)} 억원` : "--")}
@@ -806,7 +809,7 @@ async function openUsStock(ticker) {
           ${stat("시가", number(quote.open, 2))}
           ${stat("고가", number(quote.high, 2))}
           ${stat("저가", number(quote.low, 2))}
-          ${stat("거래량", compact(quote.volume))}
+          ${stat("거래대금", compactUsd(quote.tradingValue))}
           ${stat("전일 종가", number(quote.previous, 2))}
           ${stat("데이터", quote.available ? "정상" : "없음")}
         </div>

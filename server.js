@@ -92,6 +92,18 @@ function formatNumber(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+function tradingValueEok(close, volume) {
+  const price = formatNumber(close);
+  const shares = formatNumber(volume);
+  return price != null && shares != null ? (price * shares) / 100000000 : null;
+}
+
+function tradingValueUsd(close, volume) {
+  const price = formatNumber(close);
+  const shares = formatNumber(volume);
+  return price != null && shares != null ? price * shares : null;
+}
+
 function hankyungHeatColor(rate) {
   const value = Number(rate) || 0;
   if (value >= 5) return "#f3243b";
@@ -223,6 +235,9 @@ function buildKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "") {
       children: [],
     };
 
+    const close = formatNumber(trader.curprc ?? matched?.close_1dy ?? matched?.baseprc);
+    const volume = formatNumber(trader.volume || matched?.prevol);
+
     group.children.push({
       shcode: matched?.shcode || "",
       name: label,
@@ -230,8 +245,9 @@ function buildKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "") {
       chgrate: rate,
       chgprc: formatNumber(trader.chgprc),
       date: trader.workdate || "",
-      volume: trader.volume || matched?.prevol,
-      close: formatNumber(trader.curprc ?? matched?.close_1dy ?? matched?.baseprc),
+      volume,
+      tradingValue: tradingValueEok(close, volume),
+      close,
       previous: formatNumber(matched?.close_1dy ?? matched?.preprice ?? matched?.baseprc),
       open: formatNumber(trader.openprc),
       high: formatNumber(trader.highprc),
@@ -303,6 +319,7 @@ function normalizeKoreaMap(symbol, industries, stocks) {
     const change = formatNumber(trader.chgprc);
     const rate = formatNumber(trader.chgrate);
     const marketCap = formatNumber(trader.mkt_cap ?? stock.mkt_cap);
+    const volume = formatNumber(trader.volume || stock.prevol);
 
     group.children.push({
       shcode: stock.shcode,
@@ -311,7 +328,8 @@ function normalizeKoreaMap(symbol, industries, stocks) {
       chgrate: rate || 0,
       chgprc: change,
       date: trader.workdate || stock.workdate,
-      volume: trader.volume || stock.prevol,
+      volume,
+      tradingValue: tradingValueEok(close, volume),
       close,
       previous,
       open: formatNumber(trader.openprc),
@@ -418,6 +436,8 @@ async function getKoreaStock(res, code) {
 
 function normalizeKoreaStockSnapshot(stock = {}, fallback = {}) {
   const trader = stock.stock_trader || fallback.stock_trader || {};
+  const close = formatNumber(trader.curprc ?? stock.close_1dy ?? stock.baseprc ?? fallback.close_1dy ?? fallback.baseprc ?? fallback.close);
+  const volume = formatNumber(trader.volume ?? stock.prevol ?? fallback.prevol ?? fallback.volume);
   return {
     shcode: stock.shcode || fallback.shcode || "",
     name: stock.shname || stock.name || fallback.shname || fallback.name || "",
@@ -425,8 +445,9 @@ function normalizeKoreaStockSnapshot(stock = {}, fallback = {}) {
     chgrate: formatNumber(trader.chgrate ?? fallback.chgrate),
     chgprc: formatNumber(trader.chgprc ?? fallback.chgprc),
     date: trader.workdate || stock.workdate || fallback.workdate || fallback.date || "",
-    volume: formatNumber(trader.volume ?? stock.prevol ?? fallback.prevol ?? fallback.volume),
-    close: formatNumber(trader.curprc ?? stock.close_1dy ?? stock.baseprc ?? fallback.close_1dy ?? fallback.baseprc ?? fallback.close),
+    volume,
+    tradingValue: formatNumber(fallback.tradingValue) ?? tradingValueEok(close, volume),
+    close,
     previous: formatNumber(stock.close_1dy ?? stock.preprice ?? stock.baseprc ?? fallback.close_1dy ?? fallback.preprice ?? fallback.previous),
     open: formatNumber(trader.openprc ?? fallback.open),
     high: formatNumber(trader.highprc ?? fallback.high),
@@ -500,6 +521,8 @@ async function fetchNaverKoreaStockByName(name) {
   const realtime = realtimeResult.status === "fulfilled" ? realtimeResult.value?.datas?.[0] : {};
   const integration = integrationResult.status === "fulfilled" ? integrationResult.value : {};
   const marketCap = parseNaverMarketCapToEok(naverInfoValue(integration, "marketValue"));
+  const close = parsePlainNumber(realtime.closePrice);
+  const volume = parsePlainNumber(realtime.accumulatedTradingVolume);
 
   return {
     shcode: item.code,
@@ -508,8 +531,9 @@ async function fetchNaverKoreaStockByName(name) {
     chgrate: parsePlainNumber(realtime.fluctuationsRatio),
     chgprc: parsePlainNumber(realtime.compareToPreviousClosePrice),
     date: realtime.localTradedAt || "",
-    volume: parsePlainNumber(realtime.accumulatedTradingVolume),
-    close: parsePlainNumber(realtime.closePrice),
+    volume,
+    tradingValue: tradingValueEok(close, volume),
+    close,
     previous: parsePlainNumber(naverInfoValue(integration, "lastClosePrice")),
     open: parsePlainNumber(realtime.openPrice || naverInfoValue(integration, "openPrice")),
     high: parsePlainNumber(realtime.highPrice || naverInfoValue(integration, "highPrice")),
@@ -582,6 +606,7 @@ function parseStooqQuote(csv, symbol) {
     previous,
     change,
     changeRate,
+    tradingValue: tradingValueUsd(close, formatNumber(parts[7])),
     available: true,
   };
 }
@@ -642,6 +667,7 @@ async function fetchTradingViewStockQuote(symbol) {
     change: formatNumber(values[4]),
     volume: formatNumber(values[5]),
     marketCap: formatNumber(values[6]),
+    tradingValue: tradingValueUsd(values[2], values[5]),
     exchange: String(row.s || "").split(":")[0],
     available: true,
   };
@@ -723,6 +749,7 @@ async function getUsStock(res, ticker) {
     changeRate: tvQuote?.changeRate ?? stooqQuote.changeRate,
     volume: tvQuote?.volume ?? stooqQuote.volume,
     marketCap: tvQuote?.marketCap ?? null,
+    tradingValue: tvQuote?.tradingValue ?? stooqQuote.tradingValue ?? tradingValueUsd(tvQuote?.close ?? stooqQuote.close, tvQuote?.volume ?? stooqQuote.volume),
     name: tvQuote?.name || symbol,
     shortName: tvQuote?.shortName || symbol,
     exchange: tvQuote?.exchange || "",
