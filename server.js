@@ -548,6 +548,16 @@ async function getKoreaStockByName(res, name) {
     return;
   }
 
+  try {
+    const naverStock = await fetchNaverKoreaStockByName(target);
+    if (naverStock?.close != null) {
+      sendJson(res, 200, { source: "Naver", stock: naverStock });
+      return;
+    }
+  } catch (error) {
+    // Fall back to Hankyung if Naver is temporarily slow or unavailable.
+  }
+
   const normalizeName = (value) => String(value || "").replace(/\s+/g, "").toUpperCase();
   const lookup = await getHankyungStockLookup();
   const matched = lookup.get(target) ||

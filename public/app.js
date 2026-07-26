@@ -378,6 +378,38 @@ function renderKoreaMap(data) {
 
     host.append(sectorEl);
   });
+
+  warmKoreaTooltipData();
+}
+
+function warmKoreaTooltipData() {
+  if (!state.koreaMap) return;
+  const stocks = Array.from(flattenKoreaStocks(state.koreaMap).values())
+    .filter((stock) => stock?.name && needsKoreaEnrichment(stock) && !state.koreaQuoteCache.has(stock.name))
+    .sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0))
+    .slice(0, 36);
+  if (!stocks.length) return;
+
+  let cursor = 0;
+  const runNext = () => {
+    const stock = stocks[cursor];
+    cursor += 1;
+    if (!stock) return Promise.resolve();
+
+    state.koreaQuoteCache.set(stock.name, { pending: true });
+    return getJson(`/api/korea-stock-name/${encodeURIComponent(stock.name)}`)
+      .then((data) => {
+        const enriched = data.stock || {};
+        state.koreaQuoteCache.set(stock.name, enriched);
+        mergeDefined(stock, enriched);
+      })
+      .catch(() => {
+        state.koreaQuoteCache.delete(stock.name);
+      })
+      .then(runNext);
+  };
+
+  [runNext(), runNext(), runNext(), runNext()];
 }
 
 function updateKoreaMapData(data) {
@@ -475,7 +507,7 @@ function mergeDefined(target, source = {}) {
 }
 
 function renderKoreaTooltip(stock) {
-  const priceText = stock.close == null ? "조회 중" : compact(stock.close);
+  const priceText = compact(stock.close);
   const tooltip = ensureTooltip();
   tooltip.innerHTML = `
     <div class="tooltip-title">
@@ -548,7 +580,7 @@ function parseUsHoverText(text, symbol) {
 function renderUsTooltip(symbol, data = {}) {
   const displayName = data.name && data.name !== symbol ? data.name : symbol;
   const subParts = ["US", data.exchange, data.date].filter(Boolean);
-  const priceText = data.close != null ? `$${number(data.close, 2)}` : data.price ? escapeHtml(data.price) : "조회 중";
+  const priceText = data.close != null ? `$${number(data.close, 2)}` : data.price ? escapeHtml(data.price) : "--";
   const tooltip = ensureTooltip();
   tooltip.innerHTML = `
     <div class="tooltip-title">
