@@ -85,6 +85,16 @@ function directionClass(value) {
   return "neutral";
 }
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[char]));
+}
+
 async function getJson(url) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
@@ -462,15 +472,58 @@ function showKoreaTooltip(event, stock) {
   moveTooltip(event);
 }
 
+function parseUsHoverText(text, symbol) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  const rate = Number((clean.match(/([-+]?\d+(?:\.\d+)?)%/) || [])[1]);
+  const price = (clean.match(/\$?\b(\d+(?:,\d{3})*(?:\.\d+)?)\b/) || [])[1];
+  const tokens = clean.split(/\s{2,}|\n/).map((part) => part.trim()).filter(Boolean);
+  const name = tokens.find((part) => part !== symbol && !/[+-]?\d/.test(part)) || symbol;
+  return {
+    name,
+    price,
+    rate: Number.isFinite(rate) ? rate : null,
+    raw: clean,
+  };
+}
+
+function showUsTooltip(message) {
+  const symbol = message.symbol || "";
+  if (!symbol) return;
+  const data = parseUsHoverText(message.text, symbol);
+  const tooltip = ensureTooltip();
+  tooltip.innerHTML = `
+    <div class="tooltip-title">
+      <strong>${escapeHtml(symbol)}</strong>
+      <span>${escapeHtml(data.name === symbol ? "" : data.name)}</span>
+    </div>
+    <div class="tooltip-sub">US · Finviz S&P 500 맵</div>
+    <div class="tooltip-price">
+      <strong>${data.price ? escapeHtml(data.price) : "--"}</strong>
+      <span class="${directionClass(data.rate)}">${data.rate == null ? "--" : `${signed(data.rate, 2)}%`}</span>
+    </div>
+    <div class="tooltip-grid">
+      <div class="tooltip-row"><span>티커</span><strong>${escapeHtml(symbol)}</strong></div>
+      <div class="tooltip-row"><span>등락률</span><strong class="${directionClass(data.rate)}">${data.rate == null ? "--" : `${signed(data.rate, 2)}%`}</strong></div>
+    </div>
+  `;
+  tooltip.hidden = false;
+  const iframeRect = elements.usMap.getBoundingClientRect();
+  positionTooltip(iframeRect.left + Number(message.x || 0), iframeRect.top + Number(message.y || 0));
+}
+
 function moveTooltip(event) {
+  positionTooltip(event.clientX, event.clientY);
+}
+
+function positionTooltip(clientX, clientY) {
   const tooltip = ensureTooltip();
   if (tooltip.hidden) return;
   const pad = 14;
   const rect = tooltip.getBoundingClientRect();
-  let x = event.clientX + pad;
-  let y = event.clientY + pad;
-  if (x + rect.width > window.innerWidth - 8) x = event.clientX - rect.width - pad;
-  if (y + rect.height > window.innerHeight - 8) y = event.clientY - rect.height - pad;
+  let x = clientX + pad;
+  let y = clientY + pad;
+  if (x + rect.width > window.innerWidth - 8) x = clientX - rect.width - pad;
+  if (y + rect.height > window.innerHeight - 8) y = clientY - rect.height - pad;
   tooltip.style.left = `${Math.max(8, x)}px`;
   tooltip.style.top = `${Math.max(8, y)}px`;
 }
@@ -516,12 +569,18 @@ function isClockBetween(current, openHour, openMinute, closeHour, closeMinute) {
 }
 
 function updateRefreshMode() {
-  const koreaOpen = isMarketOpen("Asia/Seoul", 9, 0, 15, 30);
-  const usOpen = isMarketOpen("America/New_York", 9, 30, 16, 0);
+  const koreaClock = getMarketClock("Asia/Seoul");
+  const usClock = getMarketClock("America/New_York");
+  const koreaOpen = koreaClock.isWeekday && isClockBetween(koreaClock.minutes, 9, 0, 15, 30);
+  const usOpen = usClock.isWeekday && isClockBetween(usClock.minutes, 9, 30, 16, 0);
   const active = koreaOpen || usOpen;
-  elements.refreshLabel.textContent = active
-    ? "개장 중: 3초마다 자동 새로고침"
-    : "장 종료: 수동 새로고침";
+  if (active) {
+    elements.refreshLabel.textContent = "개장 중: 3초마다 자동 새로고침";
+  } else if (!koreaClock.isWeekday && !usClock.isWeekday) {
+    elements.refreshLabel.textContent = "휴일: 마지막 거래일 데이터 표시";
+  } else {
+    elements.refreshLabel.textContent = "장 종료: 마지막 거래일 데이터 표시";
+  }
   return active;
 }
 
@@ -682,6 +741,12 @@ window.addEventListener("resize", () => {
 window.addEventListener("message", (event) => {
   if (event.data?.type === "stock-click" && event.data.market === "US") {
     openUsStock(event.data.symbol);
+  }
+  if (event.data?.type === "stock-hover" && event.data.market === "US") {
+    showUsTooltip(event.data);
+  }
+  if (event.data?.type === "stock-hover-end" && event.data.market === "US") {
+    hideTooltip();
   }
   if (event.data?.type === "iframe-wheel") {
     window.scrollBy({ top: event.data.deltaY, left: 0, behavior: "auto" });

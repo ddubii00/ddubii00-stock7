@@ -359,18 +359,32 @@ async function getKoreaMap(res, market, termValue) {
   }
 
   const upcode = symbol === "KOSDAQ" ? "2001" : "1001";
-  const [industries, stocks] = await Promise.all([
-    fetchJson(`https://markets.hankyung.com/api/v2/index/symb/${symbol}/industries`, {
-      headers: hankyungHeaders(symbol),
-    }, 2500),
-    fetchJson(
-      `https://markets.hankyung.com/api/v2/stock/filter/stocks?upcode=${upcode}&sortBy=mkt_cap&num=2000`,
-      { headers: hankyungHeaders(symbol) },
-      2500
-    ),
-  ]);
+  try {
+    const [industries, stocks] = await Promise.all([
+      fetchJson(`https://markets.hankyung.com/api/v2/index/symb/${symbol}/industries`, {
+        headers: hankyungHeaders(symbol),
+      }, 2500),
+      fetchJson(
+        `https://markets.hankyung.com/api/v2/stock/filter/stocks?upcode=${upcode}&sortBy=mkt_cap&num=2000`,
+        { headers: hankyungHeaders(symbol) },
+        2500
+      ),
+    ]);
+    const normalized = normalizeKoreaMap(symbol, industries, stocks);
+    if (normalized.children.length) {
+      sendJson(res, 200, normalized);
+      return;
+    }
+  } catch (error) {
+    // Holidays or upstream maintenance can make the daily Hankyung map unavailable.
+  }
 
-  sendJson(res, 200, normalizeKoreaMap(symbol, industries, stocks));
+  const sourceUrl = `${KOSPD_MAP_BASE_URL}/1day`;
+  const [html, stockLookup] = await Promise.all([
+    fetchText(sourceUrl, { headers: { Referer: "https://www.kospd.com/" } }, 5000),
+    getHankyungStockLookup(),
+  ]);
+  sendJson(res, 200, normalizeKospdMap(parseKospdMapData(html), stockLookup, "1day", sourceUrl, symbol));
 }
 
 async function getKoreaStock(res, code) {
@@ -761,6 +775,28 @@ async function getFinvizMap(res) {
     ].join(" "));
   }
 
+  function hoverText() {
+    var hover = document.getElementById("hover");
+    if (!hover) return "";
+    return (hover.innerText || hover.textContent || "").trim();
+  }
+
+  function sendHover(event) {
+    var ticker = tickerFromHover() || pickTicker(event.target);
+    if (!ticker) {
+      parent.postMessage({ type: "stock-hover-end", market: "US" }, "*");
+      return;
+    }
+    parent.postMessage({
+      type: "stock-hover",
+      market: "US",
+      symbol: ticker,
+      text: hoverText(),
+      x: event.clientX,
+      y: event.clientY
+    }, "*");
+  }
+
   function pickTicker(target) {
     var node = target;
     while (node && node !== document) {
@@ -795,6 +831,18 @@ async function getFinvizMap(res) {
     event.preventDefault();
     event.stopPropagation();
     sendTicker(ticker);
+  }, true);
+
+  document.addEventListener("mousemove", function (event) {
+    var map = document.getElementById("map");
+    if (!map || !map.contains(event.target)) return;
+    window.setTimeout(function () {
+      sendHover(event);
+    }, 0);
+  }, true);
+
+  document.addEventListener("mouseleave", function () {
+    parent.postMessage({ type: "stock-hover-end", market: "US" }, "*");
   }, true);
 
   document.addEventListener("wheel", function (event) {
