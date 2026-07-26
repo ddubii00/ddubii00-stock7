@@ -198,7 +198,7 @@ async function getHankyungStockLookup() {
   return byName;
 }
 
-function normalizeKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "") {
+function buildKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "") {
   const labels = trace.labels || [];
   const parents = trace.parents || [];
   const values = trace.values || [];
@@ -263,6 +263,20 @@ function normalizeKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "
     source: "KOSPD",
     sourceUrl,
     children,
+  };
+}
+
+function normalizeKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "") {
+  const filtered = buildKospdMap(trace, stockLookup, term, sourceUrl, marketFilter);
+  if (!marketFilter || filtered.children.length) return filtered;
+
+  const unfiltered = buildKospdMap(trace, stockLookup, term, sourceUrl, "");
+  return {
+    ...unfiltered,
+    name: `KOSPD ${marketFilter}`,
+    id: `KOSPD-${marketFilter}-${term.toUpperCase()}-FALLBACK`,
+    symbol: marketFilter,
+    coverage: "KRX300",
   };
 }
 
@@ -781,9 +795,16 @@ async function getFinvizMap(res) {
     return (hover.innerText || hover.textContent || "").trim();
   }
 
+  function isStockHover(ticker, text) {
+    if (!ticker || !text) return false;
+    if (text.indexOf(ticker) < 0) return false;
+    return /[-+]?\\d+(?:\\.\\d+)?%/.test(text) || /\\$\\s*\\d/.test(text);
+  }
+
   function sendHover(event) {
-    var ticker = tickerFromHover() || pickTicker(event.target);
-    if (!ticker) {
+    var text = hoverText();
+    var ticker = tickerFromHover();
+    if (!isStockHover(ticker, text)) {
       parent.postMessage({ type: "stock-hover-end", market: "US" }, "*");
       return;
     }
@@ -791,7 +812,7 @@ async function getFinvizMap(res) {
       type: "stock-hover",
       market: "US",
       symbol: ticker,
-      text: hoverText(),
+      text: text,
       x: event.clientX,
       y: event.clientY
     }, "*");
