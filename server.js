@@ -434,6 +434,89 @@ function normalizeKoreaStockSnapshot(stock = {}, fallback = {}) {
   };
 }
 
+function parsePlainNumber(value) {
+  if (value == null) return null;
+  const parsed = Number(String(value).replace(/[,\s]/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseNaverMarketCapToEok(value) {
+  const text = String(value || "").replace(/,/g, "");
+  if (!text) return null;
+  const jo = Number((text.match(/([\d.]+)\s*조/) || [])[1] || 0);
+  const eok = Number((text.match(/([\d.]+)\s*억/) || [])[1] || 0);
+  const total = jo * 10000 + eok;
+  return Number.isFinite(total) && total > 0 ? total : parsePlainNumber(text);
+}
+
+function naverInfoValue(integration, code) {
+  return (integration?.totalInfos || []).find((item) => item.code === code)?.value;
+}
+
+async function fetchNaverKoreaStockByName(name) {
+  const search = await fetchJson(
+    `https://m.stock.naver.com/front-api/search/autoComplete?query=${encodeURIComponent(name)}&target=stock,index,marketindicator,coin,ipo`,
+    {
+      headers: {
+        Accept: "application/json, text/plain, */*",
+        Referer: "https://m.stock.naver.com/",
+      },
+      timeout: 10000,
+    },
+    30000
+  );
+  const items = search?.result?.items || search?.items || [];
+  const normalizeName = (value) => String(value || "").replace(/\s+/g, "").toUpperCase();
+  const item = items.find((entry) =>
+    /^\d{6}$/.test(String(entry.code || "")) &&
+    (normalizeName(entry.name) === normalizeName(name) || /코스피|코스닥/i.test(entry.typeName || ""))
+  ) || items.find((entry) => /^\d{6}$/.test(String(entry.code || "")));
+  if (!item?.code) return null;
+
+  const [realtimeResult, integrationResult] = await Promise.allSettled([
+    fetchJson(
+      `https://polling.finance.naver.com/api/realtime/domestic/stock/${encodeURIComponent(item.code)}`,
+      {
+        headers: {
+          Accept: "application/json, text/plain, */*",
+          Referer: "https://m.stock.naver.com/",
+        },
+        timeout: 10000,
+      },
+      10000
+    ),
+    fetchJson(
+      `https://m.stock.naver.com/api/stock/${encodeURIComponent(item.code)}/integration`,
+      {
+        headers: {
+          Accept: "application/json, text/plain, */*",
+          Referer: "https://m.stock.naver.com/",
+        },
+        timeout: 10000,
+      },
+      30000
+    ),
+  ]);
+  const realtime = realtimeResult.status === "fulfilled" ? realtimeResult.value?.datas?.[0] : {};
+  const integration = integrationResult.status === "fulfilled" ? integrationResult.value : {};
+  const marketCap = parseNaverMarketCapToEok(naverInfoValue(integration, "marketValue"));
+
+  return {
+    shcode: item.code,
+    name: integration.stockName || realtime.stockName || item.name || name,
+    value: marketCap,
+    chgrate: parsePlainNumber(realtime.fluctuationsRatio),
+    chgprc: parsePlainNumber(realtime.compareToPreviousClosePrice),
+    date: realtime.localTradedAt || "",
+    volume: parsePlainNumber(realtime.accumulatedTradingVolume),
+    close: parsePlainNumber(realtime.closePrice),
+    previous: parsePlainNumber(naverInfoValue(integration, "lastClosePrice")),
+    open: parsePlainNumber(realtime.openPrice || naverInfoValue(integration, "openPrice")),
+    high: parsePlainNumber(realtime.highPrice || naverInfoValue(integration, "highPrice")),
+    low: parsePlainNumber(realtime.lowPrice || naverInfoValue(integration, "lowPrice")),
+  };
+}
+
 async function getKoreaStockByName(res, name) {
   const target = String(name || "").trim();
   if (!target || target.length > 40) {
@@ -447,6 +530,11 @@ async function getKoreaStockByName(res, name) {
     Array.from(lookup.values()).find((stock) => normalizeName(stock.shname || stock.name) === normalizeName(target));
 
   if (!matched) {
+    const naverStock = await fetchNaverKoreaStockByName(target);
+    if (naverStock) {
+      sendJson(res, 200, { source: "Naver", stock: naverStock });
+      return;
+    }
     sendJson(res, 404, { error: "종목을 찾지 못했습니다." });
     return;
   }
