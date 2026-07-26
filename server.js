@@ -625,7 +625,7 @@ async function fetchTradingViewStockQuote(symbol) {
       },
       body: JSON.stringify({
         symbols: { tickers },
-        columns: ["name", "close", "change", "change_abs", "volume", "market_cap_basic"],
+        columns: ["name", "description", "close", "change", "change_abs", "volume", "market_cap_basic"],
       }),
     },
     1500
@@ -635,12 +635,13 @@ async function fetchTradingViewStockQuote(symbol) {
   if (!row) return null;
   const values = row.d || [];
   return {
-    name: values[0] || symbol,
-    close: formatNumber(values[1]),
-    changeRate: formatNumber(values[2]),
-    change: formatNumber(values[3]),
-    volume: formatNumber(values[4]),
-    marketCap: formatNumber(values[5]),
+    name: values[1] || values[0] || symbol,
+    shortName: values[0] || symbol,
+    close: formatNumber(values[2]),
+    changeRate: formatNumber(values[3]),
+    change: formatNumber(values[4]),
+    volume: formatNumber(values[5]),
+    marketCap: formatNumber(values[6]),
     exchange: String(row.s || "").split(":")[0],
     available: true,
   };
@@ -723,6 +724,7 @@ async function getUsStock(res, ticker) {
     volume: tvQuote?.volume ?? stooqQuote.volume,
     marketCap: tvQuote?.marketCap ?? null,
     name: tvQuote?.name || symbol,
+    shortName: tvQuote?.shortName || symbol,
     exchange: tvQuote?.exchange || "",
     available: Boolean(tvQuote?.available || stooqQuote.available),
   };
@@ -983,6 +985,12 @@ async function getFinvizMap(res) {
     ].join(" "));
   }
 
+  function stockTickerFromHover() {
+    var text = hoverText();
+    var ticker = tickerFromHover();
+    return isStockHover(ticker, text) ? ticker : "";
+  }
+
   function hoverText() {
     var hover = document.getElementById("hover");
     if (!hover) return "";
@@ -1033,7 +1041,7 @@ async function getFinvizMap(res) {
   };
 
   document.addEventListener("click", function (event) {
-    var ticker = pickTicker(event.target) || tickerFromHover();
+    var ticker = pickTicker(event.target) || stockTickerFromHover();
     if (!ticker) return;
     event.preventDefault();
     event.stopPropagation();
@@ -1041,7 +1049,7 @@ async function getFinvizMap(res) {
   }, true);
 
   document.addEventListener("dblclick", function (event) {
-    var ticker = pickTicker(event.target) || tickerFromHover();
+    var ticker = pickTicker(event.target) || stockTickerFromHover();
     if (!ticker) return;
     event.preventDefault();
     event.stopPropagation();

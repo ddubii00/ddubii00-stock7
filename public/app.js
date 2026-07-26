@@ -545,13 +545,15 @@ function parseUsHoverText(text, symbol) {
 }
 
 function renderUsTooltip(symbol, data = {}) {
+  const displayName = data.name && data.name !== symbol ? data.name : symbol;
+  const subParts = ["US", data.exchange, data.date].filter(Boolean);
   const tooltip = ensureTooltip();
   tooltip.innerHTML = `
     <div class="tooltip-title">
-      <strong>${escapeHtml(symbol)}</strong>
-      <span>${escapeHtml(data.name && data.name !== symbol ? data.name : "")}</span>
+      <strong>${escapeHtml(displayName)}</strong>
+      <span>${escapeHtml(symbol)}</span>
     </div>
-    <div class="tooltip-sub">US · ${escapeHtml(data.exchange || "Finviz S&P 500 맵")}</div>
+    <div class="tooltip-sub">${escapeHtml(subParts.join(" · "))}</div>
     <div class="tooltip-price">
       <strong>${data.close != null ? `$${number(data.close, 2)}` : data.price ? escapeHtml(data.price) : "--"}</strong>
       <span class="${directionClass(data.rate)}">${data.rate == null ? "--" : `${signed(data.rate, 2)}%`}</span>
@@ -591,6 +593,7 @@ function showUsTooltip(message) {
       const quote = data.quote || {};
       const enriched = {
         name: quote.name || symbol,
+        date: quote.date || quote.time || "",
         close: quote.close,
         rate: quote.changeRate,
         volume: quote.volume,
