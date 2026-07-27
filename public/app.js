@@ -469,7 +469,7 @@ function warmKoreaTooltipData() {
     if (!stock) return Promise.resolve();
 
     state.koreaQuoteCache.set(stock.name, { pending: true });
-    return getJson(`/api/korea-stock-name/${encodeURIComponent(stock.name)}`)
+    return fetchKoreaStockEnrichment(stock)
       .then((data) => {
         const enriched = data.stock || {};
         state.koreaQuoteCache.set(stock.name, enriched);
@@ -717,6 +717,13 @@ function needsKoreaEnrichment(stock) {
   return !stock.shcode || stock.close == null || stock.tradingValue == null || stock.tradingValue === "";
 }
 
+function fetchKoreaStockEnrichment(stock) {
+  if (stock?.shcode) {
+    return getJson(`/api/korea-stock-quote/${encodeURIComponent(stock.shcode)}`);
+  }
+  return getJson(`/api/korea-stock-name/${encodeURIComponent(stock.name)}`);
+}
+
 function showKoreaTooltip(event, stock) {
   const requestKey = `KR:${stockKey(stock)}`;
   state.tooltipKey = requestKey;
@@ -735,7 +742,7 @@ function showKoreaTooltip(event, stock) {
   if (cached?.pending) return;
 
   state.koreaQuoteCache.set(cacheKey, { pending: true });
-  getJson(`/api/korea-stock-name/${encodeURIComponent(stock.name)}`)
+  fetchKoreaStockEnrichment(stock)
     .then((data) => {
       const enriched = data.stock || {};
       state.koreaQuoteCache.set(cacheKey, enriched);

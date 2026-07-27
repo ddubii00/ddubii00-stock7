@@ -450,6 +450,21 @@ async function getKoreaStock(res, code) {
   sendJson(res, 200, data);
 }
 
+async function getKoreaStockQuote(res, code) {
+  if (!/^\d{6}$/.test(String(code || ""))) {
+    sendJson(res, 400, { error: "잘못된 종목 코드입니다." });
+    return;
+  }
+
+  const quotes = await fetchNaverKoreaStocksByCodes([code]);
+  const stock = quotes.get(code);
+  if (!stock?.close) {
+    sendJson(res, 404, { error: "종목 시세를 찾지 못했습니다." });
+    return;
+  }
+  sendJson(res, 200, { source: "Naver", stock });
+}
+
 function normalizeKoreaStockSnapshot(stock = {}, fallback = {}) {
   const trader = stock.stock_trader || fallback.stock_trader || {};
   const close = formatNumber(trader.curprc ?? stock.close_1dy ?? stock.baseprc ?? fallback.close_1dy ?? fallback.baseprc ?? fallback.close);
@@ -573,11 +588,12 @@ function applyRealtimeToKoreaMap(map, realtimeByCode, { preserveRate = false } =
 }
 
 async function enrichKoreaMapWithRealtime(map, options = {}) {
+  const limit = options.limit ?? 360;
   const stocks = (map.children || [])
     .flatMap((group) => group.children || [])
     .filter((stock) => stock?.shcode)
     .sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0));
-  const codes = stocks.map((stock) => stock.shcode);
+  const codes = stocks.slice(0, limit).map((stock) => stock.shcode);
   const realtimeByCode = await fetchNaverKoreaStocksByCodes(codes);
   return applyRealtimeToKoreaMap(map, realtimeByCode, options);
 }
@@ -1373,6 +1389,11 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/api/korea-map") {
       await getKoreaMap(res, url.searchParams.get("market"), url.searchParams.get("term"));
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/korea-stock-quote/")) {
+      await getKoreaStockQuote(res, decodeURIComponent(url.pathname.split("/").pop()));
       return;
     }
 
