@@ -24,7 +24,7 @@ const KOSPD_TERMS = {
   ytd: "연초",
 };
 
-const KOREA_MAP_CACHE_PREFIX = "stock7:korea-map:";
+const KOREA_MAP_CACHE_PREFIX = "stock7:korea-map:v2:";
 
 const elements = {
   kospiIndex: document.getElementById("kospiIndex"),
@@ -353,7 +353,6 @@ function updateUsHeader() {
 
 function renderKoreaMap(data) {
   state.koreaMap = data;
-  state.koreaMarket = data.symbol || state.koreaMarket;
   const host = elements.koreaMap;
   host.innerHTML = "";
   hideTooltip();

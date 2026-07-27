@@ -144,6 +144,10 @@ function parsePercent(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function normalizeKoreaStockName(value) {
+  return String(value || "").replace(/\s+/g, "").toUpperCase();
+}
+
 function extractJsValue(text, token) {
   const tokenIndex = text.indexOf(token);
   if (tokenIndex < 0) {
@@ -217,7 +221,10 @@ async function getHankyungStockLookup() {
     result.value.forEach((stock) => {
       const name = stock.shname || stock.name;
       if (!name || byName.has(name)) return;
-      byName.set(name, { ...stock, sourceMarket: symbol });
+      const normalized = normalizeKoreaStockName(name);
+      const value = { ...stock, sourceMarket: symbol };
+      byName.set(name, value);
+      if (normalized && !byName.has(normalized)) byName.set(normalized, value);
     });
   });
   return byName;
@@ -235,7 +242,7 @@ function buildKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "") {
     const parent = parents[index];
     if (!parent) return;
 
-    const matched = stockLookup.get(label);
+    const matched = stockLookup.get(label) || stockLookup.get(normalizeKoreaStockName(label));
     if (marketFilter && matched?.sourceMarket !== marketFilter) return;
     const trader = matched?.stock_trader || {};
     const rate = formatNumber(colors[index]) ?? parsePercent(custom[index]) ?? 0;
@@ -612,10 +619,9 @@ async function fetchNaverKoreaStockByName(name) {
     30000
   );
   const items = search?.result?.items || search?.items || [];
-  const normalizeName = (value) => String(value || "").replace(/\s+/g, "").toUpperCase();
   const item = items.find((entry) =>
     /^\d{6}$/.test(String(entry.code || "")) &&
-    (normalizeName(entry.name) === normalizeName(name) || /코스피|코스닥/i.test(entry.typeName || ""))
+    (normalizeKoreaStockName(entry.name) === normalizeKoreaStockName(name) || /코스피|코스닥/i.test(entry.typeName || ""))
   ) || items.find((entry) => /^\d{6}$/.test(String(entry.code || "")));
   if (!item?.code) return null;
 
@@ -682,10 +688,10 @@ async function getKoreaStockByName(res, name) {
     // Fall back to Hankyung if Naver is temporarily slow or unavailable.
   }
 
-  const normalizeName = (value) => String(value || "").replace(/\s+/g, "").toUpperCase();
   const lookup = await getHankyungStockLookup();
   const matched = lookup.get(target) ||
-    Array.from(lookup.values()).find((stock) => normalizeName(stock.shname || stock.name) === normalizeName(target));
+    lookup.get(normalizeKoreaStockName(target)) ||
+    Array.from(lookup.values()).find((stock) => normalizeKoreaStockName(stock.shname || stock.name) === normalizeKoreaStockName(target));
 
   if (!matched) {
     const naverStock = await fetchNaverKoreaStockByName(target);
