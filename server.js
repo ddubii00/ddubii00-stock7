@@ -204,7 +204,7 @@ async function getHankyungStockLookup() {
     markets.map(([symbol, upcode]) =>
       fetchJson(
         `https://markets.hankyung.com/api/v2/stock/filter/stocks?upcode=${upcode}&sortBy=mkt_cap&num=2000`,
-        { headers: hankyungHeaders(symbol) },
+        { headers: hankyungHeaders(symbol), timeout: 2500 },
         60000
       )
     )
@@ -392,7 +392,7 @@ async function getKoreaMap(res, market, termValue) {
   if (symbol === "KRX300" || term !== "1day") {
     const sourceUrl = `${KOSPD_MAP_BASE_URL}/${term}`;
     const [html, stockLookup] = await Promise.all([
-      fetchText(sourceUrl, { headers: { Referer: "https://www.kospd.com/" } }, 5000),
+      fetchText(sourceUrl, { headers: { Referer: "https://www.kospd.com/" }, timeout: 5000 }, 5000),
       getHankyungStockLookup(),
     ]);
     const normalized = normalizeKospdMap(
@@ -411,10 +411,11 @@ async function getKoreaMap(res, market, termValue) {
     const [industries, stocks] = await Promise.all([
       fetchJson(`https://markets.hankyung.com/api/v2/index/symb/${symbol}/industries`, {
         headers: hankyungHeaders(symbol),
+        timeout: 2500,
       }, 2500),
       fetchJson(
         `https://markets.hankyung.com/api/v2/stock/filter/stocks?upcode=${upcode}&sortBy=mkt_cap&num=2000`,
-        { headers: hankyungHeaders(symbol) },
+        { headers: hankyungHeaders(symbol), timeout: 2500 },
         2500
       ),
     ]);
@@ -429,7 +430,7 @@ async function getKoreaMap(res, market, termValue) {
 
   const sourceUrl = `${KOSPD_MAP_BASE_URL}/1day`;
   const [html, stockLookup] = await Promise.all([
-    fetchText(sourceUrl, { headers: { Referer: "https://www.kospd.com/" } }, 5000),
+    fetchText(sourceUrl, { headers: { Referer: "https://www.kospd.com/" }, timeout: 5000 }, 5000),
     getHankyungStockLookup(),
   ]);
   const normalized = normalizeKospdMap(parseKospdMapData(html), stockLookup, "1day", sourceUrl, symbol);
@@ -444,7 +445,7 @@ async function getKoreaStock(res, code) {
 
   const data = await fetchJson(
     `https://markets.hankyung.com/api/v2/stock/${encodeURIComponent(code)}/detail`,
-    { headers: hankyungHeaders() },
+    { headers: hankyungHeaders(), timeout: 2500 },
     2500
   );
   sendJson(res, 200, data);
@@ -701,7 +702,7 @@ async function getKoreaStockByName(res, name) {
     try {
       const detail = await fetchJson(
         `https://markets.hankyung.com/api/v2/stock/${encodeURIComponent(matched.shcode)}/detail`,
-        { headers: hankyungHeaders(matched.sourceMarket || "KOSPI") },
+        { headers: hankyungHeaders(matched.sourceMarket || "KOSPI"), timeout: 2500 },
         2500
       );
       detailStock = detail.stock || matched;
@@ -916,6 +917,7 @@ async function getIndices(res) {
   const [summaryResult, tvResult] = await Promise.allSettled([
     fetchJson("https://markets.hankyung.com/api/v2/main/summary-indices", {
       headers: hankyungHeaders(),
+      timeout: 2500,
     }, 2500),
     fetchTradingViewQuotes(["NASDAQ:IXIC", "CBOE:SPX", "FX_IDC:USDKRW"]),
   ]);
