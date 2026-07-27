@@ -98,6 +98,18 @@ function tradingValueEok(close, volume) {
   return price != null && shares != null ? (price * shares) / 100000000 : null;
 }
 
+function parseKoreanMoneyToEok(value) {
+  const text = String(value || "").replace(/,/g, "").trim();
+  if (!text) return null;
+  const jo = Number((text.match(/([\d.]+)\s*조/) || [])[1] || 0);
+  const eok = Number((text.match(/([\d.]+)\s*억/) || [])[1] || 0);
+  if (jo || eok) {
+    const total = jo * 10000 + eok;
+    return Number.isFinite(total) ? total : null;
+  }
+  return parsePlainNumber(text);
+}
+
 function tradingValueUsd(close, volume) {
   const price = formatNumber(close);
   const shares = formatNumber(volume);
@@ -383,11 +395,14 @@ async function getKoreaMap(res, market, termValue) {
       fetchText(sourceUrl, { headers: { Referer: "https://www.kospd.com/" } }, 5000),
       getHankyungStockLookup(),
     ]);
-    sendJson(
-      res,
-      200,
-      normalizeKospdMap(parseKospdMapData(html), stockLookup, term, sourceUrl, symbol === "KRX300" ? "" : symbol)
+    const normalized = normalizeKospdMap(
+      parseKospdMapData(html),
+      stockLookup,
+      term,
+      sourceUrl,
+      symbol === "KRX300" ? "" : symbol
     );
+    sendJson(res, 200, await enrichKoreaMapWithRealtime(normalized, { preserveRate: term !== "1day" }));
     return;
   }
 
@@ -405,7 +420,7 @@ async function getKoreaMap(res, market, termValue) {
     ]);
     const normalized = normalizeKoreaMap(symbol, industries, stocks);
     if (normalized.children.length) {
-      sendJson(res, 200, normalized);
+      sendJson(res, 200, await enrichKoreaMapWithRealtime(normalized));
       return;
     }
   } catch (error) {
@@ -417,7 +432,8 @@ async function getKoreaMap(res, market, termValue) {
     fetchText(sourceUrl, { headers: { Referer: "https://www.kospd.com/" } }, 5000),
     getHankyungStockLookup(),
   ]);
-  sendJson(res, 200, normalizeKospdMap(parseKospdMapData(html), stockLookup, "1day", sourceUrl, symbol));
+  const normalized = normalizeKospdMap(parseKospdMapData(html), stockLookup, "1day", sourceUrl, symbol);
+  sendJson(res, 200, await enrichKoreaMapWithRealtime(normalized));
 }
 
 async function getKoreaStock(res, code) {
@@ -474,6 +490,98 @@ function naverInfoValue(integration, code) {
   return (integration?.totalInfos || []).find((item) => item.code === code)?.value;
 }
 
+function normalizeNaverRealtimeStock(realtime = {}) {
+  const close = parsePlainNumber(realtime.closePrice);
+  const volume = parsePlainNumber(realtime.accumulatedTradingVolume);
+  const tradingValue = parseKoreanMoneyToEok(realtime.accumulatedTradingValue) ?? tradingValueEok(close, volume);
+  return {
+    shcode: realtime.itemCode || "",
+    name: realtime.stockName || "",
+    chgrate: parsePlainNumber(realtime.fluctuationsRatio),
+    chgprc: parsePlainNumber(realtime.compareToPreviousClosePrice),
+    date: realtime.localTradedAt || "",
+    volume,
+    tradingValue,
+    close,
+    open: parsePlainNumber(realtime.openPrice),
+    high: parsePlainNumber(realtime.highPrice),
+    low: parsePlainNumber(realtime.lowPrice),
+  };
+}
+
+async function fetchNaverKoreaStocksByCodes(codes) {
+  const uniqueCodes = Array.from(new Set(codes.filter((code) => /^\d{6}$/.test(String(code || "")))));
+  if (!uniqueCodes.length) return new Map();
+
+  const batches = [];
+  for (let index = 0; index < uniqueCodes.length; index += 80) {
+    batches.push(uniqueCodes.slice(index, index + 80));
+  }
+
+  const results = await Promise.allSettled(
+    batches.map((batch) =>
+      fetchJson(
+        `https://polling.finance.naver.com/api/realtime/domestic/stock/${batch.join(",")}`,
+        {
+          headers: {
+            Accept: "application/json, text/plain, */*",
+            Referer: "https://m.stock.naver.com/",
+          },
+          timeout: 1600,
+        },
+        2500
+      )
+    )
+  );
+
+  const byCode = new Map();
+  results.forEach((result) => {
+    if (result.status !== "fulfilled") return;
+    (result.value?.datas || []).forEach((stock) => {
+      const normalized = normalizeNaverRealtimeStock(stock);
+      if (normalized.shcode) byCode.set(normalized.shcode, normalized);
+    });
+  });
+  return byCode;
+}
+
+function applyRealtimeToKoreaMap(map, realtimeByCode, { preserveRate = false } = {}) {
+  if (!realtimeByCode?.size) return map;
+  map.children?.forEach((group) => {
+    group.children?.forEach((stock) => {
+      const realtime = realtimeByCode.get(stock.shcode);
+      if (!realtime) return;
+      const previous = realtime.close != null && realtime.chgprc != null ? realtime.close - realtime.chgprc : stock.previous;
+      const rate = preserveRate ? stock.chgrate : realtime.chgrate ?? stock.chgrate;
+      Object.assign(stock, {
+        close: realtime.close ?? stock.close,
+        chgrate: rate,
+        chgprc: preserveRate ? stock.chgprc : realtime.chgprc ?? stock.chgprc,
+        date: realtime.date || stock.date,
+        volume: realtime.volume ?? stock.volume,
+        tradingValue: realtime.tradingValue ?? stock.tradingValue,
+        previous,
+        open: realtime.open ?? stock.open,
+        high: realtime.high ?? stock.high,
+        low: realtime.low ?? stock.low,
+        fill: preserveRate ? stock.fill : hankyungHeatColor(rate),
+      });
+    });
+  });
+  map.realtimeSource = "Naver";
+  return map;
+}
+
+async function enrichKoreaMapWithRealtime(map, options = {}) {
+  const stocks = (map.children || [])
+    .flatMap((group) => group.children || [])
+    .filter((stock) => stock?.shcode)
+    .sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0));
+  const codes = stocks.map((stock) => stock.shcode);
+  const realtimeByCode = await fetchNaverKoreaStocksByCodes(codes);
+  return applyRealtimeToKoreaMap(map, realtimeByCode, options);
+}
+
 async function fetchNaverKoreaStockByName(name) {
   const search = await fetchJson(
     `https://m.stock.naver.com/front-api/search/autoComplete?query=${encodeURIComponent(name)}&target=stock,index,marketindicator,coin,ipo`,
@@ -521,23 +629,22 @@ async function fetchNaverKoreaStockByName(name) {
   const realtime = realtimeResult.status === "fulfilled" ? realtimeResult.value?.datas?.[0] : {};
   const integration = integrationResult.status === "fulfilled" ? integrationResult.value : {};
   const marketCap = parseNaverMarketCapToEok(naverInfoValue(integration, "marketValue"));
-  const close = parsePlainNumber(realtime.closePrice);
-  const volume = parsePlainNumber(realtime.accumulatedTradingVolume);
+  const normalized = normalizeNaverRealtimeStock(realtime);
 
   return {
     shcode: item.code,
-    name: integration.stockName || realtime.stockName || item.name || name,
+    name: integration.stockName || normalized.name || item.name || name,
     value: marketCap,
-    chgrate: parsePlainNumber(realtime.fluctuationsRatio),
-    chgprc: parsePlainNumber(realtime.compareToPreviousClosePrice),
-    date: realtime.localTradedAt || "",
-    volume,
-    tradingValue: tradingValueEok(close, volume),
-    close,
+    chgrate: normalized.chgrate,
+    chgprc: normalized.chgprc,
+    date: normalized.date,
+    volume: normalized.volume,
+    tradingValue: normalized.tradingValue,
+    close: normalized.close,
     previous: parsePlainNumber(naverInfoValue(integration, "lastClosePrice")),
-    open: parsePlainNumber(realtime.openPrice || naverInfoValue(integration, "openPrice")),
-    high: parsePlainNumber(realtime.highPrice || naverInfoValue(integration, "highPrice")),
-    low: parsePlainNumber(realtime.lowPrice || naverInfoValue(integration, "lowPrice")),
+    open: normalized.open ?? parsePlainNumber(naverInfoValue(integration, "openPrice")),
+    high: normalized.high ?? parsePlainNumber(naverInfoValue(integration, "highPrice")),
+    low: normalized.low ?? parsePlainNumber(naverInfoValue(integration, "lowPrice")),
   };
 }
 

@@ -24,6 +24,8 @@ const KOSPD_TERMS = {
   ytd: "연초",
 };
 
+const KOREA_MAP_CACHE_PREFIX = "stock7:korea-map:";
+
 const elements = {
   kospiIndex: document.getElementById("kospiIndex"),
   kosdaqIndex: document.getElementById("kosdaqIndex"),
@@ -133,6 +135,41 @@ async function getJson(url) {
     request.ontimeout = () => reject(new Error("네트워크 요청 시간이 초과되었습니다."));
     request.send();
   });
+}
+
+function storageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    return null;
+  }
+}
+
+function storageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (error) {
+    // 최신 네트워크 응답 경로는 저장소를 사용할 수 없어도 정상 동작합니다.
+  }
+}
+
+function koreaMapCacheKey() {
+  return `${KOREA_MAP_CACHE_PREFIX}${state.koreaMarket}:${state.koreaTerm}`;
+}
+
+function renderCachedKoreaMap() {
+  if (state.koreaMap) return false;
+  const cached = storageGet(koreaMapCacheKey());
+  if (!cached) return false;
+  try {
+    const data = JSON.parse(cached);
+    if (!data?.children?.length) return false;
+    renderKoreaMap(data);
+    elements.koreaLoading.hidden = true;
+    return true;
+  } catch (error) {
+    return false;
+  }
 }
 
 function setIndex(el, index = {}) {
@@ -574,11 +611,13 @@ function updateKoreaMapData(data) {
 }
 
 async function refreshKoreaMap({ forceRender = false, showLoading = false } = {}) {
-  if (showLoading) elements.koreaLoading.hidden = false;
+  const showedCachedMap = renderCachedKoreaMap();
+  if (showLoading && !showedCachedMap) elements.koreaLoading.hidden = false;
   try {
     const data = await getJson(
       `/api/korea-map?market=${encodeURIComponent(state.koreaMarket)}&term=${encodeURIComponent(state.koreaTerm)}`
     );
+    storageSet(koreaMapCacheKey(), JSON.stringify(data));
     if (forceRender || !state.koreaMap || !elements.koreaMap.querySelector(".tile")) {
       renderKoreaMap(data);
     } else {
