@@ -208,7 +208,7 @@ async function getHankyungStockLookup() {
     markets.map(([symbol, upcode]) =>
       fetchJson(
         `https://markets.hankyung.com/api/v2/stock/filter/stocks?upcode=${upcode}&sortBy=mkt_cap&num=2000`,
-        { headers: hankyungHeaders(symbol), timeout: 2500 },
+        { headers: hankyungHeaders(symbol), timeout: 7000 },
         60000
       )
     )
@@ -307,16 +307,7 @@ function buildKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "") {
 
 function normalizeKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "") {
   const filtered = buildKospdMap(trace, stockLookup, term, sourceUrl, marketFilter);
-  if (!marketFilter || filtered.children.length) return filtered;
-
-  const unfiltered = buildKospdMap(trace, stockLookup, term, sourceUrl, "");
-  return {
-    ...unfiltered,
-    name: `KOSPD ${marketFilter}`,
-    id: `KOSPD-${marketFilter}-${term.toUpperCase()}-FALLBACK`,
-    symbol: marketFilter,
-    coverage: "KRX300",
-  };
+  return filtered;
 }
 
 function normalizeKoreaMap(symbol, industries, stocks) {
@@ -412,6 +403,9 @@ async function getKoreaMap(res, market, termValue) {
       sourceUrl,
       symbol === "KRX300" ? "" : symbol
     );
+    if (symbol !== "KRX300" && !normalized.children.length) {
+      throw new Error(`${symbol} map is empty`);
+    }
     sendJson(res, 200, await enrichKoreaMapWithRealtime(normalized, { preserveRate: term !== "1day" }));
     return;
   }
@@ -421,11 +415,11 @@ async function getKoreaMap(res, market, termValue) {
     const [industries, stocks] = await Promise.all([
       fetchJson(`https://markets.hankyung.com/api/v2/index/symb/${symbol}/industries`, {
         headers: hankyungHeaders(symbol),
-        timeout: 2500,
+        timeout: 7000,
       }, 2500),
       fetchJson(
         `https://markets.hankyung.com/api/v2/stock/filter/stocks?upcode=${upcode}&sortBy=mkt_cap&num=2000`,
-        { headers: hankyungHeaders(symbol), timeout: 2500 },
+        { headers: hankyungHeaders(symbol), timeout: 7000 },
         2500
       ),
     ]);
@@ -444,6 +438,9 @@ async function getKoreaMap(res, market, termValue) {
     getHankyungStockLookup(),
   ]);
   const normalized = normalizeKospdMap(parseKospdMapData(html), stockLookup, "1day", sourceUrl, symbol);
+  if (!normalized.children.length) {
+    throw new Error(`${symbol} map is empty`);
+  }
   sendJson(res, 200, await enrichKoreaMapWithRealtime(normalized));
 }
 
