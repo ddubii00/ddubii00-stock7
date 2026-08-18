@@ -664,6 +664,7 @@ function setKoreaMarket(market) {
     button.classList.toggle("active", button.dataset.market === state.koreaMarket);
   });
   state.koreaMap = null;
+  elements.koreaMap.innerHTML = "";
   refreshKoreaMap({ forceRender: true, showLoading: true });
 }
 
@@ -675,6 +676,7 @@ function setKoreaTerm(term) {
     button.classList.toggle("active", button.dataset.term === state.koreaTerm);
   });
   state.koreaMap = null;
+  elements.koreaMap.innerHTML = "";
   refreshKoreaMap({ forceRender: true, showLoading: true });
 }
 
