@@ -79,6 +79,35 @@ async function fetchJson(url, options = {}, ttlMs = 0) {
   return JSON.parse(text);
 }
 
+async function fetchDecodedText(url, encoding, options = {}, ttlMs = 0) {
+  const cacheKey = `${url}|${encoding}`;
+  const cached = cache.get(cacheKey);
+  if (cached && Date.now() - cached.time < ttlMs) {
+    return cached.text;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeout || 12000);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "*/*",
+        ...(options.headers || {}),
+      },
+    });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const text = new TextDecoder(encoding).decode(buffer);
+    if (ttlMs > 0) cache.set(cacheKey, { text, time: Date.now() });
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function hankyungHeaders(market = "KOSPI") {
   return {
     Authorization: `Bearer ${HANKYUNG_API_KEY}`,
@@ -146,6 +175,95 @@ function parsePercent(value) {
 
 function normalizeKoreaStockName(value) {
   return String(value || "").toUpperCase().replace(/[^0-9A-Z가-힣]/g, "");
+}
+
+function stripHtml(value) {
+  return String(value || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseNaverMarketRows(html, symbol) {
+  const rows = html.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+  return rows.map((row) => {
+    const link = row.match(/\/item\/main\.naver\?code=(\d{6})["'][^>]*>([\s\S]*?)<\/a>/i);
+    if (!link) return null;
+
+    const shcode = link[1];
+    const name = stripHtml(link[2]);
+    const numbers = [...row.matchAll(/<td[^>]*class=["'][^"']*number[^"']*["'][^>]*>([\s\S]*?)<\/td>/gi)]
+      .map((match) => stripHtml(match[1]));
+    const close = parsePlainNumber(numbers[0]);
+    const rawChange = parsePlainNumber(numbers[1]);
+    let rate = parsePercent(numbers[2]);
+    const isDown = /nv01|하락|down/i.test(row) || /^-/.test(numbers[2] || "");
+    const isUp = /red01|상승|up/i.test(row) || /^\+/.test(numbers[2] || "");
+    if (rate != null && isDown) rate = -Math.abs(rate);
+    if (rate != null && isUp) rate = Math.abs(rate);
+    const chgprc = rawChange == null ? null : isDown ? -Math.abs(rawChange) : rawChange;
+    const marketCap = parsePlainNumber(numbers[4]);
+    const volume = parsePlainNumber(numbers[7]);
+
+    return {
+      shcode,
+      name,
+      value: marketCap || 0,
+      chgrate: rate || 0,
+      chgprc,
+      date: "",
+      volume,
+      tradingValue: tradingValueEok(close, volume),
+      close,
+      previous: close != null && chgprc != null ? close - chgprc : null,
+      sourceMarket: symbol,
+      fill: hankyungHeatColor(rate),
+      type: "stock",
+    };
+  }).filter(Boolean);
+}
+
+async function fetchNaverMarketMap(symbol) {
+  const sosok = symbol === "KOSDAQ" ? 1 : 0;
+  const pages = Array.from({ length: 12 }, (_, index) => index + 1);
+  const results = await Promise.allSettled(
+    pages.map((page) =>
+      fetchDecodedText(
+        `https://finance.naver.com/sise/sise_market_sum.naver?sosok=${sosok}&page=${page}`,
+        "euc-kr",
+        { headers: { Referer: "https://finance.naver.com/" }, timeout: 7000 },
+        30000
+      )
+    )
+  );
+
+  const byCode = new Map();
+  results.forEach((result) => {
+    if (result.status !== "fulfilled") return;
+    parseNaverMarketRows(result.value, symbol).forEach((stock) => {
+      if (!byCode.has(stock.shcode)) byCode.set(stock.shcode, stock);
+    });
+  });
+  const stocks = Array.from(byCode.values()).sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0));
+  return {
+    name: `Naver ${symbol}`,
+    header: "1day",
+    id: `NAVER-${symbol}-1DAY`,
+    symbol,
+    source: "Naver",
+    children: stocks.length
+      ? [{
+          name: symbol,
+          upcode: symbol,
+          type: "industry",
+          children: stocks,
+        }]
+      : [],
+  };
 }
 
 function extractJsValue(text, token) {
@@ -429,7 +547,15 @@ async function getKoreaMap(res, market, termValue) {
       return;
     }
   } catch (error) {
-    // Holidays or upstream maintenance can make the daily Hankyung map unavailable.
+    try {
+      const naverMap = await fetchNaverMarketMap(symbol);
+      if (naverMap.children.length) {
+        sendJson(res, 200, await enrichKoreaMapWithRealtime(naverMap));
+        return;
+      }
+    } catch (naverError) {
+      // Holidays or upstream maintenance can make the daily Hankyung map unavailable.
+    }
   }
 
   const sourceUrl = `${KOSPD_MAP_BASE_URL}/1day`;
