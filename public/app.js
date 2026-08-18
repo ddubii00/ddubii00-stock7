@@ -12,6 +12,7 @@ const state = {
   tooltipY: 0,
   timers: [],
   finalKoreaRefreshKey: "",
+  koreaMapRequestId: 0,
 };
 
 const KOSPD_TERMS = {
@@ -24,7 +25,7 @@ const KOSPD_TERMS = {
   ytd: "연초",
 };
 
-const KOREA_MAP_CACHE_PREFIX = "stock7:korea-map:v2:";
+const KOREA_MAP_CACHE_PREFIX = "stock7:korea-map:v3:";
 
 const elements = {
   kospiIndex: document.getElementById("kospiIndex"),
@@ -610,12 +611,22 @@ function updateKoreaMapData(data) {
 }
 
 async function refreshKoreaMap({ forceRender = false, showLoading = false } = {}) {
+  const requestId = ++state.koreaMapRequestId;
+  const requestedMarket = state.koreaMarket;
+  const requestedTerm = state.koreaTerm;
   const showedCachedMap = renderCachedKoreaMap();
   if (showLoading && !showedCachedMap) elements.koreaLoading.hidden = false;
   try {
     const data = await getJson(
-      `/api/korea-map?market=${encodeURIComponent(state.koreaMarket)}&term=${encodeURIComponent(state.koreaTerm)}`
+      `/api/korea-map?market=${encodeURIComponent(requestedMarket)}&term=${encodeURIComponent(requestedTerm)}`
     );
+    if (
+      requestId !== state.koreaMapRequestId ||
+      requestedMarket !== state.koreaMarket ||
+      requestedTerm !== state.koreaTerm
+    ) {
+      return;
+    }
     storageSet(koreaMapCacheKey(), JSON.stringify(data));
     if (forceRender || !state.koreaMap || !elements.koreaMap.querySelector(".tile")) {
       renderKoreaMap(data);
@@ -624,6 +635,13 @@ async function refreshKoreaMap({ forceRender = false, showLoading = false } = {}
     }
     elements.koreaLoading.hidden = true;
   } catch (error) {
+    if (
+      requestId !== state.koreaMapRequestId ||
+      requestedMarket !== state.koreaMarket ||
+      requestedTerm !== state.koreaTerm
+    ) {
+      return;
+    }
     elements.koreaLoading.hidden = false;
     elements.koreaLoading.innerHTML = `
       <div class="load-error">

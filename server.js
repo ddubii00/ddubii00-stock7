@@ -145,7 +145,7 @@ function parsePercent(value) {
 }
 
 function normalizeKoreaStockName(value) {
-  return String(value || "").replace(/\s+/g, "").toUpperCase();
+  return String(value || "").toUpperCase().replace(/[^0-9A-Z가-힣]/g, "");
 }
 
 function extractJsValue(text, token) {
@@ -246,7 +246,10 @@ function buildKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "") {
     if (marketFilter && matched?.sourceMarket !== marketFilter) return;
     const trader = matched?.stock_trader || {};
     const rate = formatNumber(colors[index]) ?? parsePercent(custom[index]) ?? 0;
-    const marketCap = formatNumber(values[index]) ?? formatNumber(trader.mkt_cap ?? matched?.mkt_cap) ?? 0;
+    const traceMarketCap = formatNumber(values[index]);
+    const marketCap = traceMarketCap != null
+      ? traceMarketCap / 100000000
+      : formatNumber(trader.mkt_cap ?? matched?.mkt_cap) ?? 0;
     const group = groups.get(parent) || {
       name: parent,
       upcode: parent,
@@ -596,14 +599,37 @@ function applyRealtimeToKoreaMap(map, realtimeByCode, { preserveRate = false } =
 }
 
 async function enrichKoreaMapWithRealtime(map, options = {}) {
-  const limit = options.limit ?? 360;
+  const limit = options.limit ?? 2000;
   const stocks = (map.children || [])
     .flatMap((group) => group.children || [])
     .filter((stock) => stock?.shcode)
     .sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0));
   const codes = stocks.slice(0, limit).map((stock) => stock.shcode);
   const realtimeByCode = await fetchNaverKoreaStocksByCodes(codes);
-  return applyRealtimeToKoreaMap(map, realtimeByCode, options);
+  applyRealtimeToKoreaMap(map, realtimeByCode, options);
+
+  const missingCodeStocks = (map.children || [])
+    .flatMap((group) => group.children || [])
+    .filter((stock) => !stock.shcode && stock.name)
+    .slice(0, 20);
+  if (missingCodeStocks.length) {
+    const results = await Promise.allSettled(
+      missingCodeStocks.map((stock) => fetchNaverKoreaStockByName(stock.name))
+    );
+    results.forEach((result, index) => {
+      if (result.status !== "fulfilled" || !result.value?.shcode) return;
+      const stock = missingCodeStocks[index];
+      const rate = options.preserveRate ? stock.chgrate : result.value.chgrate ?? stock.chgrate;
+      Object.assign(stock, {
+        ...result.value,
+        value: stock.value || result.value.value,
+        chgrate: rate,
+        fill: options.preserveRate ? stock.fill : hankyungHeatColor(rate),
+      });
+    });
+  }
+
+  return map;
 }
 
 async function fetchNaverKoreaStockByName(name) {
