@@ -227,7 +227,64 @@ function parseNaverMarketRows(html, symbol) {
   }).filter(Boolean);
 }
 
-async function fetchNaverMarketMap(symbol) {
+const NAVER_SECTOR_RULES = [
+  ["제약·바이오", ["알테오젠", "HLB", "셀트리온", "리가켐", "삼천당", "휴젤", "바이오", "제약", "약품", "메디", "헬스", "랩", "신라젠", "오스코텍", "에스티팜", "케어", "진단", "파마"]],
+  ["반도체", ["리노공업", "심텍", "주성엔지니어링", "원익IPS", "하나마이크론", "ISC", "동진쎄미켐", "이오테크닉스", "HPSP", "테크윙", "칩스앤미디어", "피에스케이", "솔브레인", "반도체", "쎄미", "세미콘", "웨이퍼", "테크놀로지"]],
+  ["2차전지·소재", ["에코프로", "엘앤에프", "천보", "대주전자재료", "포스코퓨처엠", "금양", "배터리", "전지", "소재", "머티리얼", "첨단소재", "양극재", "음극재"]],
+  ["전기·전자", ["삼성전자", "LG전자", "삼성전기", "LG이노텍", "전기", "전자", "일렉트릭", "디스플레이", "OLED", "LED", "파워"]],
+  ["인터넷·게임", ["NAVER", "카카오", "엔씨", "크래프톤", "넷마블", "펄어비스", "위메이드", "컴투스", "SOOP", "게임", "소프트", "데브", "인터넷", "플랫폼"]],
+  ["금융", ["금융", "증권", "은행", "보험", "카드", "캐피탈", "지주", "투자", "자산"]],
+  ["자동차·부품", ["현대차", "기아", "모비스", "HL만도", "타이어", "오토", "모터", "차", "자동차", "부품"]],
+  ["화학·에너지", ["화학", "케미칼", "에너지", "가스", "정유", "S-OIL", "OCI", "솔라", "태양광", "석유"]],
+  ["산업재·기계", ["두산", "로보", "로봇", "기계", "중공업", "조선", "오션", "로템", "엘리베이터", "산업"]],
+  ["철강·금속", ["철강", "스틸", "금속", "아연", "제강", "POSCO", "포스코"]],
+  ["건설·부동산", ["건설", "엔지니어링", "부동산", "리츠", "건축"]],
+  ["소비재·유통", ["식품", "푸드", "음료", "유통", "쇼핑", "호텔", "화장품", "코스메", "생활", "패션"]],
+  ["통신·미디어", ["통신", "미디어", "엔터", "스튜디오", "JYP", "SM", "와이지", "하이브", "방송", "콘텐츠"]],
+  ["운송·물류", ["항공", "해운", "물류", "택배", "운송", "대한항공"]],
+];
+
+function inferNaverSector(stock, stockLookup = new Map()) {
+  const matched = stockLookup.get(stock.shcode) ||
+    stockLookup.get(stock.name) ||
+    stockLookup.get(normalizeKoreaStockName(stock.name));
+  if (matched?.industry) return matched.industry;
+
+  const normalized = normalizeKoreaStockName(stock.name);
+  const rawName = String(stock.name || "").toUpperCase();
+  const rule = NAVER_SECTOR_RULES.find(([, keywords]) =>
+    keywords.some((keyword) => normalized.includes(normalizeKoreaStockName(keyword)) || rawName.includes(String(keyword).toUpperCase()))
+  );
+  return rule ? rule[0] : "기타";
+}
+
+function groupNaverStocksBySector(stocks, stockLookup = new Map()) {
+  const groups = new Map();
+  stocks.forEach((stock) => {
+    const sectorName = inferNaverSector(stock, stockLookup);
+    const group = groups.get(sectorName) || {
+      name: sectorName,
+      upcode: sectorName,
+      type: "industry",
+      children: [],
+    };
+    group.children.push(stock);
+    groups.set(sectorName, group);
+  });
+
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      children: group.children.sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0)),
+    }))
+    .sort(
+      (a, b) =>
+        b.children.reduce((sum, stock) => sum + (Number(stock.value) || 0), 0) -
+        a.children.reduce((sum, stock) => sum + (Number(stock.value) || 0), 0)
+    );
+}
+
+async function fetchNaverMarketMap(symbol, stockLookup = new Map()) {
   const sosok = symbol === "KOSDAQ" ? 1 : 0;
   const pages = Array.from({ length: 12 }, (_, index) => index + 1);
   const results = await Promise.allSettled(
@@ -255,14 +312,7 @@ async function fetchNaverMarketMap(symbol) {
     id: `NAVER-${symbol}-1DAY`,
     symbol,
     source: "Naver",
-    children: stocks.length
-      ? [{
-          name: symbol,
-          upcode: symbol,
-          type: "industry",
-          children: stocks,
-        }]
-      : [],
+    children: groupNaverStocksBySector(stocks, stockLookup),
   };
 }
 
@@ -343,6 +393,7 @@ async function getHankyungStockLookup() {
       const value = { ...stock, sourceMarket: symbol };
       byName.set(name, value);
       if (normalized && !byName.has(normalized)) byName.set(normalized, value);
+      if (stock.shcode && !byName.has(stock.shcode)) byName.set(stock.shcode, value);
     });
   });
   return byName;
@@ -438,7 +489,8 @@ function normalizeKoreaMap(symbol, industries, stocks) {
     const trader = stock.stock_trader || {};
     const upcode = String(stock.upcode || stock.upcode_m || "ETC");
     const industryName = industryNames.get(upcode) || stock.industry || "기타";
-    const group = groups.get(upcode) || {
+    const groupKey = industryName || upcode;
+    const group = groups.get(groupKey) || {
       name: industryName,
       upcode,
       type: "industry",
@@ -470,7 +522,7 @@ function normalizeKoreaMap(symbol, industries, stocks) {
       type: "stock",
     });
 
-    groups.set(upcode, group);
+    groups.set(groupKey, group);
   });
 
   const children = Array.from(groups.values())
@@ -548,7 +600,13 @@ async function getKoreaMap(res, market, termValue) {
     }
   } catch (error) {
     try {
-      const naverMap = await fetchNaverMarketMap(symbol);
+      let stockLookup = new Map();
+      try {
+        stockLookup = await getHankyungStockLookup();
+      } catch {
+        stockLookup = new Map();
+      }
+      const naverMap = await fetchNaverMarketMap(symbol, stockLookup);
       if (naverMap.children.length) {
         sendJson(res, 200, await enrichKoreaMapWithRealtime(naverMap));
         return;
