@@ -243,18 +243,34 @@ const NAVER_SECTOR_RULES = [
   ["종이·목재", ["종이", "목재", "제지", "페이퍼"]],
 ];
 
+function canonicalKoreaSectorName(name, stock = {}) {
+  const code = String(stock.shcode || stock.code || stock.symbol || "").replace(/\D/g, "");
+  const stockName = normalizeKoreaStockName(stock.shname || stock.name || "");
+  if (["005930", "000660"].includes(code) || ["삼성전자", "SK하이닉스"].includes(stockName)) {
+    return "전기·전자";
+  }
+
+  const normalized = String(name || "")
+    .replace(/[\s·.ㆍ/()_-]+/g, "")
+    .toLowerCase();
+  if (["전기전자", "전기전자제품", "반도체", "반도체와반도체장비"].includes(normalized)) {
+    return "전기·전자";
+  }
+  return String(name || "").trim() || "기타";
+}
+
 function inferNaverSector(stock, stockLookup = new Map()) {
   const matched = stockLookup.get(stock.shcode) ||
     stockLookup.get(stock.name) ||
     stockLookup.get(normalizeKoreaStockName(stock.name));
-  if (matched?.industry) return matched.industry;
+  if (matched?.industry) return canonicalKoreaSectorName(matched.industry, stock);
 
   const normalized = normalizeKoreaStockName(stock.name);
   const rawName = String(stock.name || "").toUpperCase();
   const rule = NAVER_SECTOR_RULES.find(([, keywords]) =>
     keywords.some((keyword) => normalized.includes(normalizeKoreaStockName(keyword)) || rawName.includes(String(keyword).toUpperCase()))
   );
-  return rule ? rule[0] : "기타";
+  return canonicalKoreaSectorName(rule ? rule[0] : "기타", stock);
 }
 
 function groupNaverStocksBySector(stocks, stockLookup = new Map()) {
@@ -396,7 +412,8 @@ function hankyungIndustryCodes(stock = {}) {
 
 function hankyungIndustryName(stock, industryMap) {
   const matchedCode = hankyungIndustryCodes(stock).find((code) => industryMap.get(code));
-  return industryMap.get(matchedCode) || stock?.industry || stock?.industryName || stock?.sector || "";
+  const name = industryMap.get(matchedCode) || stock?.industry || stock?.industryName || stock?.sector || "";
+  return canonicalKoreaSectorName(name, stock);
 }
 
 async function getHankyungStockLookup() {
@@ -460,7 +477,10 @@ function buildKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "") {
     const marketCap = traceMarketCap != null
       ? traceMarketCap / 100000000
       : formatNumber(trader.mkt_cap ?? matched?.mkt_cap) ?? 0;
-    const groupName = matched?.industry || parent;
+    const groupName = canonicalKoreaSectorName(matched?.industry || parent, {
+      ...matched,
+      name: label,
+    });
     const groupKey = groupName || parent;
     const group = groups.get(groupKey) || {
       name: groupName,
@@ -530,7 +550,7 @@ function normalizeKoreaMap(symbol, industries, stocks) {
     const trader = stock.stock_trader || {};
     const upcode = hankyungIndustryCodes(stock).find((code) => industryNames.get(code)) ||
       String(stock.upcode || stock.upcode_m || "ETC");
-    const industryName = hankyungIndustryName(stock, industryNames) || "기타";
+    const industryName = canonicalKoreaSectorName(hankyungIndustryName(stock, industryNames), stock);
     const groupKey = industryName || upcode;
     const group = groups.get(groupKey) || {
       name: industryName,
