@@ -292,6 +292,15 @@ function flattenKoreaStocks(data) {
   return stocks;
 }
 
+function koreaSectorMembershipSignature(data) {
+  return (data?.children || [])
+    .flatMap((sector) =>
+      (sector.children || []).map((stock) => `${stockKey(stock)}:${sector.name}`)
+    )
+    .sort()
+    .join("|");
+}
+
 function flattenUsStocks(data) {
   const stocks = new Map();
   (data.children || []).forEach((sector) => {
@@ -628,7 +637,9 @@ async function refreshKoreaMap({ forceRender = false, showLoading = false } = {}
       return;
     }
     storageSet(koreaMapCacheKey(), JSON.stringify(data));
-    if (forceRender || !state.koreaMap || !elements.koreaMap.querySelector(".tile")) {
+    const sectorMembershipChanged = state.koreaMap &&
+      koreaSectorMembershipSignature(state.koreaMap) !== koreaSectorMembershipSignature(data);
+    if (forceRender || sectorMembershipChanged || !state.koreaMap || !elements.koreaMap.querySelector(".tile")) {
       renderKoreaMap(data);
     } else {
       updateKoreaMapData(data);
