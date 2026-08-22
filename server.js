@@ -228,20 +228,19 @@ function parseNaverMarketRows(html, symbol) {
 }
 
 const NAVER_SECTOR_RULES = [
-  ["제약·바이오", ["알테오젠", "HLB", "셀트리온", "리가켐", "삼천당", "휴젤", "바이오", "제약", "약품", "메디", "헬스", "랩", "신라젠", "오스코텍", "에스티팜", "케어", "진단", "파마"]],
-  ["반도체", ["리노공업", "심텍", "주성엔지니어링", "원익IPS", "하나마이크론", "ISC", "동진쎄미켐", "이오테크닉스", "HPSP", "테크윙", "칩스앤미디어", "피에스케이", "솔브레인", "반도체", "쎄미", "세미콘", "웨이퍼", "테크놀로지"]],
-  ["2차전지·소재", ["에코프로", "엘앤에프", "천보", "대주전자재료", "포스코퓨처엠", "금양", "배터리", "전지", "소재", "머티리얼", "첨단소재", "양극재", "음극재"]],
-  ["전기·전자", ["삼성전자", "LG전자", "삼성전기", "LG이노텍", "전기", "전자", "일렉트릭", "디스플레이", "OLED", "LED", "파워"]],
-  ["인터넷·게임", ["NAVER", "카카오", "엔씨", "크래프톤", "넷마블", "펄어비스", "위메이드", "컴투스", "SOOP", "게임", "소프트", "데브", "인터넷", "플랫폼"]],
-  ["금융", ["금융", "증권", "은행", "보험", "카드", "캐피탈", "지주", "투자", "자산"]],
-  ["자동차·부품", ["현대차", "기아", "모비스", "HL만도", "타이어", "오토", "모터", "차", "자동차", "부품"]],
-  ["화학·에너지", ["화학", "케미칼", "에너지", "가스", "정유", "S-OIL", "OCI", "솔라", "태양광", "석유"]],
-  ["산업재·기계", ["두산", "로보", "로봇", "기계", "중공업", "조선", "오션", "로템", "엘리베이터", "산업"]],
-  ["철강·금속", ["철강", "스틸", "금속", "아연", "제강", "POSCO", "포스코"]],
-  ["건설·부동산", ["건설", "엔지니어링", "부동산", "리츠", "건축"]],
-  ["소비재·유통", ["식품", "푸드", "음료", "유통", "쇼핑", "호텔", "화장품", "코스메", "생활", "패션"]],
-  ["통신·미디어", ["통신", "미디어", "엔터", "스튜디오", "JYP", "SM", "와이지", "하이브", "방송", "콘텐츠"]],
-  ["운송·물류", ["항공", "해운", "물류", "택배", "운송", "대한항공"]],
+  ["전기·전자", ["삼성전자", "SK하이닉스", "LG전자", "삼성전기", "LG이노텍", "리노공업", "심텍", "주성엔지니어링", "원익IPS", "하나마이크론", "ISC", "동진쎄미켐", "이오테크닉스", "HPSP", "테크윙", "칩스앤미디어", "피에스케이", "솔브레인", "반도체", "쎄미", "세미콘", "웨이퍼", "전기", "전자", "일렉트릭", "디스플레이", "OLED", "LED", "파워"]],
+  ["제약", ["알테오젠", "HLB", "셀트리온", "리가켐", "삼천당", "휴젤", "삼성바이오", "유한양행", "바이오", "제약", "약품", "메디", "헬스", "랩", "신라젠", "오스코텍", "에스티팜", "케어", "진단", "파마"]],
+  ["화학", ["LG화학", "에코프로", "엘앤에프", "천보", "대주전자재료", "포스코퓨처엠", "금양", "배터리", "전지", "소재", "머티리얼", "첨단소재", "양극재", "음극재", "화학", "케미칼", "에너지", "가스", "정유", "S-OIL", "OCI", "솔라", "태양광", "석유"]],
+  ["운송장비·부품", ["현대차", "기아", "모비스", "HL만도", "타이어", "오토", "모터", "차", "자동차", "부품"]],
+  ["기계·장비", ["두산", "로보", "로봇", "기계", "중공업", "조선", "오션", "로템", "엘리베이터", "산업"]],
+  ["금속", ["철강", "스틸", "금속", "아연", "제강", "POSCO", "포스코"]],
+  ["증권", ["증권", "투자증권"]],
+  ["보험", ["보험", "생명", "화재", "손해"]],
+  ["음식료·담배", ["식품", "푸드", "음료", "담배", "농심", "오리온", "CJ제일제당", "하이트", "롯데칠성"]],
+  ["섬유·의류", ["섬유", "의류", "패션", "F&F", "한섬", "영원무역"]],
+  ["비금속", ["비금속", "시멘트", "유리", "세라믹"]],
+  ["의료·정밀기기", ["정밀", "의료기기", "덴티움", "클래시스", "레이", "뷰웍스"]],
+  ["종이·목재", ["종이", "목재", "제지", "페이퍼"]],
 ];
 
 function inferNaverSector(stock, stockLookup = new Map()) {
@@ -367,31 +366,73 @@ function parseKospdMapData(html) {
   return mapData[0];
 }
 
+function buildHankyungIndustryMap(industries = []) {
+  const map = new Map();
+  (Array.isArray(industries) ? industries : []).forEach((industry) => {
+    const name = industry.name || industry.hname || industry.korName || "";
+    if (!name) return;
+    [industry.upcode_m, industry.upcode, industry.code, industry.industry_code]
+      .map((code) => String(code || ""))
+      .filter(Boolean)
+      .forEach((code) => {
+        if (!map.has(code)) map.set(code, name);
+      });
+  });
+  return map;
+}
+
+function hankyungIndustryCodes(stock = {}) {
+  return [
+    stock.upcode_m,
+    stock.industry_code,
+    stock.industryCode,
+    stock.bstp_code,
+    stock.bstpCode,
+    stock.upcode,
+  ]
+    .map((code) => String(code || ""))
+    .filter((code) => code && code !== "1001" && code !== "2001");
+}
+
+function hankyungIndustryName(stock, industryMap) {
+  const matchedCode = hankyungIndustryCodes(stock).find((code) => industryMap.get(code));
+  return industryMap.get(matchedCode) || stock?.industry || stock?.industryName || stock?.sector || "";
+}
+
 async function getHankyungStockLookup() {
   const markets = [
     ["KOSPI", "1001"],
     ["KOSDAQ", "2001"],
   ];
   const results = await Promise.allSettled(
-    markets.map(([symbol, upcode]) =>
-      fetchJson(
-        `https://markets.hankyung.com/api/v2/stock/filter/stocks?upcode=${upcode}&sortBy=mkt_cap&num=2000`,
-        { headers: hankyungHeaders(symbol), timeout: 7000 },
-        60000
-      )
-    )
+    markets.map(async ([symbol, upcode]) => {
+      const [industries, stocks] = await Promise.all([
+        fetchJson(`https://markets.hankyung.com/api/v2/index/symb/${symbol}/industries`, {
+          headers: hankyungHeaders(symbol),
+          timeout: 7000,
+        }, 60000),
+        fetchJson(
+          `https://markets.hankyung.com/api/v2/stock/filter/stocks?upcode=${upcode}&sortBy=mkt_cap&num=2000`,
+          { headers: hankyungHeaders(symbol), timeout: 7000 },
+          60000
+        ),
+      ]);
+      return { symbol, industryMap: buildHankyungIndustryMap(industries), stocks };
+    })
   );
 
   const byName = new Map();
-  results.forEach((result, index) => {
-    if (result.status !== "fulfilled" || !Array.isArray(result.value)) return;
-    const symbol = markets[index][0];
-    result.value.forEach((stock) => {
+  results.forEach((result) => {
+    if (result.status !== "fulfilled" || !Array.isArray(result.value.stocks)) return;
+    const { symbol, industryMap, stocks } = result.value;
+    stocks.forEach((stock) => {
       const name = stock.shname || stock.name;
-      if (!name || byName.has(name)) return;
+      if (!name) return;
       const normalized = normalizeKoreaStockName(name);
-      const value = { ...stock, sourceMarket: symbol };
-      byName.set(name, value);
+      const industry = hankyungIndustryName(stock, industryMap);
+      const industryUpcode = hankyungIndustryCodes(stock).find((code) => industryMap.get(code)) || "";
+      const value = { ...stock, industry, industryUpcode, sourceMarket: symbol };
+      if (!byName.has(name)) byName.set(name, value);
       if (normalized && !byName.has(normalized)) byName.set(normalized, value);
       if (stock.shcode && !byName.has(stock.shcode)) byName.set(stock.shcode, value);
     });
@@ -419,9 +460,11 @@ function buildKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "") {
     const marketCap = traceMarketCap != null
       ? traceMarketCap / 100000000
       : formatNumber(trader.mkt_cap ?? matched?.mkt_cap) ?? 0;
-    const group = groups.get(parent) || {
-      name: parent,
-      upcode: parent,
+    const groupName = matched?.industry || parent;
+    const groupKey = groupName || parent;
+    const group = groups.get(groupKey) || {
+      name: groupName,
+      upcode: matched?.industryUpcode || parent,
       type: "industry",
       children: [],
     };
@@ -448,7 +491,7 @@ function buildKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "") {
       type: "stock",
     });
 
-    groups.set(parent, group);
+    groups.set(groupKey, group);
   });
 
   const children = Array.from(groups.values())
@@ -480,15 +523,14 @@ function normalizeKospdMap(trace, stockLookup, term, sourceUrl, marketFilter = "
 }
 
 function normalizeKoreaMap(symbol, industries, stocks) {
-  const industryNames = new Map(
-    industries.map((industry) => [String(industry.upcode), industry.name || industry.hname])
-  );
+  const industryNames = buildHankyungIndustryMap(industries);
   const groups = new Map();
 
   stocks.forEach((stock) => {
     const trader = stock.stock_trader || {};
-    const upcode = String(stock.upcode || stock.upcode_m || "ETC");
-    const industryName = industryNames.get(upcode) || stock.industry || "기타";
+    const upcode = hankyungIndustryCodes(stock).find((code) => industryNames.get(code)) ||
+      String(stock.upcode || stock.upcode_m || "ETC");
+    const industryName = hankyungIndustryName(stock, industryNames) || "기타";
     const groupKey = industryName || upcode;
     const group = groups.get(groupKey) || {
       name: industryName,
