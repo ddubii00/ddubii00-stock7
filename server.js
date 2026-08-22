@@ -243,6 +243,37 @@ const NAVER_SECTOR_RULES = [
   ["종이·목재", ["종이", "목재", "제지", "페이퍼"]],
 ];
 
+// Hankyung's stock feed carries the complete KOSPI classification in `upcode`.
+// Its industries endpoint only lists manufacturing groups, so seed the omitted
+// service-sector names here before merging the live industry response.
+const HANKYUNG_KOSPI_INDUSTRY_NAMES = new Map([
+  ["1001", "어업"],
+  ["1005", "음식료·담배"],
+  ["1006", "섬유·의류"],
+  ["1007", "종이·목재"],
+  ["1008", "화학"],
+  ["1009", "제약"],
+  ["1010", "비금속"],
+  ["1011", "금속"],
+  ["1012", "기계·장비"],
+  ["1013", "전기·전자"],
+  ["1014", "의료·정밀기기"],
+  ["1015", "운송장비·부품"],
+  ["1016", "유통"],
+  ["1017", "전기·가스"],
+  ["1018", "건설"],
+  ["1019", "운송·창고"],
+  ["1020", "통신"],
+  ["1021", "금융"],
+  ["1024", "증권"],
+  ["1025", "보험"],
+  ["1026", "일반서비스"],
+  ["1027", "기타제조"],
+  ["1045", "부동산"],
+  ["1046", "IT 서비스"],
+  ["1047", "오락·문화"],
+]);
+
 function canonicalKoreaSectorName(name, stock = {}) {
   const code = String(stock.shcode || stock.code || stock.symbol || "").replace(/\D/g, "");
   const stockName = normalizeKoreaStockName(stock.shname || stock.name || "");
@@ -383,7 +414,7 @@ function parseKospdMapData(html) {
 }
 
 function buildHankyungIndustryMap(industries = []) {
-  const map = new Map();
+  const map = new Map(HANKYUNG_KOSPI_INDUSTRY_NAMES);
   (Array.isArray(industries) ? industries : []).forEach((industry) => {
     const name = industry.name || industry.hname || industry.korName || "";
     if (!name) return;
@@ -407,7 +438,7 @@ function hankyungIndustryCodes(stock = {}) {
     stock.upcode,
   ]
     .map((code) => String(code || ""))
-    .filter((code) => code && code !== "1001" && code !== "2001");
+    .filter((code) => code && code !== "2001");
 }
 
 function hankyungIndustryName(stock, industryMap) {
