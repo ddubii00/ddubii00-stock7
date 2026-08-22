@@ -661,6 +661,107 @@ function normalizeKoreaMap(symbol, industries, stocks) {
   };
 }
 
+async function fetchHankyungSocketPacket(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeout || 7000);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        "User-Agent": USER_AGENT,
+        Origin: "https://markets.hankyung.com",
+        Referer: "https://markets.hankyung.com/",
+        ...(options.headers || {}),
+      },
+    });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    return response.text();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeHankyungSocketMap(symbol, term, map) {
+  const children = (map?.children || [])
+    .map((sector) => {
+      const sectorName = canonicalKoreaSectorName(sector.name);
+      if (symbol === "KOSPI" && !HANKYUNG_KOSPI_SECTOR_NAMES.has(sectorName)) return null;
+      return {
+        ...sector,
+        name: sectorName,
+        children: (sector.children || []).map((stock) => {
+          const close = formatNumber(stock.close);
+          const rate = formatNumber(stock.chgrate) ?? 0;
+          const volume = formatNumber(stock.volume);
+          const previous = close != null && rate !== -100 ? close / (1 + rate / 100) : close;
+          return {
+            ...stock,
+            value: formatNumber(stock.value) ?? 0,
+            chgrate: rate,
+            chgprc: close != null && previous != null ? close - previous : null,
+            volume,
+            close,
+            previous,
+            tradingValue: tradingValueEok(close, volume),
+            sourceMarket: symbol,
+            fill: stock.fill || hankyungHeatColor(rate),
+            type: "stock",
+          };
+        }),
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    ...map,
+    id: `HANKYUNG-SOCKET-${symbol}-${term}`,
+    header: term,
+    symbol,
+    source: "Hankyung Socket",
+    sourceUrl: `https://markets.hankyung.com/marketmap/${symbol.toLowerCase()}`,
+    children,
+  };
+}
+
+async function fetchHankyungSocketMap(symbol, term = "1day") {
+  const cacheKey = `hankyung-socket-map:${symbol}:${term}`;
+  const cached = cache.get(cacheKey);
+  if (cached?.data && Date.now() - cached.time < 2500) {
+    return structuredClone(cached.data);
+  }
+
+  const baseUrl = "https://markets-ws.hankyung.com/socket.io/?EIO=4&transport=polling";
+  const openPacket = await fetchHankyungSocketPacket(`${baseUrl}&t=${Date.now()}`);
+  const openJsonIndex = openPacket.indexOf("{");
+  if (!openPacket.startsWith("0") || openJsonIndex < 0) throw new Error("Hankyung socket did not open");
+  const sid = JSON.parse(openPacket.slice(openJsonIndex)).sid;
+  if (!sid) throw new Error("Hankyung socket id is missing");
+
+  const pollingUrl = `${baseUrl}&sid=${encodeURIComponent(sid)}`;
+  const postPacket = (body) => fetchHankyungSocketPacket(`${pollingUrl}&t=${Date.now()}`, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=UTF-8" },
+    body,
+  });
+  const pollPacket = () => fetchHankyungSocketPacket(`${pollingUrl}&t=${Date.now()}`);
+
+  await postPacket("40");
+  await pollPacket();
+  const eventName = `marketmap-${symbol.toLowerCase()}`;
+  await postPacket(`42${JSON.stringify([eventName])}`);
+  const eventResponse = await pollPacket();
+  const eventPacket = eventResponse.split("\x1e").find((packet) => packet.startsWith("42["));
+  if (!eventPacket) throw new Error("Hankyung market-map event is missing");
+  const [receivedEvent, maps] = JSON.parse(eventPacket.slice(2));
+  if (receivedEvent !== eventName || !maps?.[term]) throw new Error(`Hankyung ${term} map is missing`);
+
+  const normalized = normalizeHankyungSocketMap(symbol, term, maps[term]);
+  if (!normalized.children.length) throw new Error(`Hankyung ${symbol} socket map is empty`);
+  cache.set(cacheKey, { time: Date.now(), data: normalized });
+  return structuredClone(normalized);
+}
+
 function parseKoreaMarket(value) {
   const market = String(value || "KOSPI").toUpperCase();
   if (market === "KRX300") return "KRX300";
@@ -675,6 +776,15 @@ function parseKospdTerm(value) {
 async function getKoreaMap(res, market, termValue) {
   const symbol = parseKoreaMarket(market);
   const term = parseKospdTerm(termValue);
+  if (symbol === "KOSPI" && term === "1day") {
+    try {
+      const socketMap = await fetchHankyungSocketMap(symbol, term);
+      sendJson(res, 200, await enrichKoreaMapWithRealtime(socketMap));
+      return;
+    } catch (error) {
+      // Fall through to the REST and holiday-safe fallback sources below.
+    }
+  }
   if (symbol === "KRX300" || term !== "1day") {
     const sourceUrl = `${KOSPD_MAP_BASE_URL}/${term}`;
     const [html, stockLookup] = await Promise.all([
