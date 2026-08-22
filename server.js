@@ -763,6 +763,14 @@ async function fetchHankyungSocketMap(symbol, term = "1day") {
   return structuredClone(normalized);
 }
 
+function promiseWithTimeout(promise, timeoutMs, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 function parseKoreaMarket(value) {
   const market = String(value || "KOSPI").toUpperCase();
   if (market === "KRX300") return "KRX300";
@@ -779,7 +787,10 @@ async function getKoreaMap(res, market, termValue) {
   const term = parseKospdTerm(termValue);
   if ((symbol === "KOSPI" || symbol === "KOSDAQ") && term === "1day") {
     try {
-      const socketMap = await fetchHankyungSocketMap(symbol, term);
+      const socketRequest = fetchHankyungSocketMap(symbol, term);
+      const socketMap = symbol === "KOSDAQ"
+        ? await promiseWithTimeout(socketRequest, 2500, "Hankyung KOSDAQ socket timed out")
+        : await socketRequest;
       sendJson(res, 200, await enrichKoreaMapWithRealtime(socketMap));
       return;
     } catch (error) {
