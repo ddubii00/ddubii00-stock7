@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const HANKYUNG_KOSPI_STOCK_CODES_BY_SECTOR = require("./hankyung-kospi-sectors.json");
 
 const PORT = Number(process.env.PORT || 8000);
 const ROOT = __dirname;
@@ -273,6 +274,11 @@ const HANKYUNG_KOSPI_INDUSTRY_NAMES = new Map([
   ["1046", "IT 서비스"],
   ["1047", "오락·문화"],
 ]);
+const HANKYUNG_KOSPI_STOCK_SECTOR_BY_CODE = new Map(
+  Object.entries(HANKYUNG_KOSPI_STOCK_CODES_BY_SECTOR).flatMap(([sector, codes]) =>
+    codes.map((code) => [code, sector])
+  )
+);
 
 function canonicalKoreaSectorName(name, stock = {}) {
   const code = String(stock.shcode || stock.code || stock.symbol || "").replace(/\D/g, "");
@@ -295,6 +301,8 @@ function inferNaverSector(stock, stockLookup = new Map()) {
     stockLookup.get(stock.name) ||
     stockLookup.get(normalizeKoreaStockName(stock.name));
   if (matched?.industry) return canonicalKoreaSectorName(matched.industry, stock);
+  const snapshotSector = HANKYUNG_KOSPI_STOCK_SECTOR_BY_CODE.get(String(stock.shcode || ""));
+  if (snapshotSector) return snapshotSector;
 
   const normalized = normalizeKoreaStockName(stock.name);
   const rawName = String(stock.name || "").toUpperCase();
@@ -443,7 +451,9 @@ function hankyungIndustryCodes(stock = {}) {
 
 function hankyungIndustryName(stock, industryMap) {
   const matchedCode = hankyungIndustryCodes(stock).find((code) => industryMap.get(code));
-  const name = industryMap.get(matchedCode) || stock?.industry || stock?.industryName || stock?.sector || "";
+  const snapshotSector = HANKYUNG_KOSPI_STOCK_SECTOR_BY_CODE.get(String(stock.shcode || ""));
+  const name = industryMap.get(matchedCode) || snapshotSector ||
+    stock?.industry || stock?.industryName || stock?.sector || "";
   return canonicalKoreaSectorName(name, stock);
 }
 
