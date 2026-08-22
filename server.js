@@ -248,7 +248,7 @@ const NAVER_SECTOR_RULES = [
 // Its industries endpoint only lists manufacturing groups, so seed the omitted
 // service-sector names here before merging the live industry response.
 const HANKYUNG_KOSPI_INDUSTRY_NAMES = new Map([
-  ["1001", "어업"],
+  ["1001", "코스피"],
   ["1005", "음식료·담배"],
   ["1006", "섬유·의류"],
   ["1007", "종이·목재"],
@@ -269,7 +269,7 @@ const HANKYUNG_KOSPI_INDUSTRY_NAMES = new Map([
   ["1024", "증권"],
   ["1025", "보험"],
   ["1026", "일반서비스"],
-  ["1027", "기타제조"],
+  ["1027", "제조"],
   ["1045", "부동산"],
   ["1046", "IT 서비스"],
   ["1047", "오락·문화"],
@@ -279,6 +279,7 @@ const HANKYUNG_KOSPI_STOCK_SECTOR_BY_CODE = new Map(
     codes.map((code) => [code, sector])
   )
 );
+const HANKYUNG_KOSPI_SECTOR_NAMES = new Set(HANKYUNG_KOSPI_INDUSTRY_NAMES.values());
 
 function canonicalKoreaSectorName(name, stock = {}) {
   const code = String(stock.shcode || stock.code || stock.symbol || "").replace(/\D/g, "");
@@ -365,7 +366,8 @@ async function fetchNaverMarketMap(symbol, stockLookup = new Map()) {
       const matched = stockLookup.get(stock.shcode) ||
         stockLookup.get(stock.name) ||
         stockLookup.get(normalizeKoreaStockName(stock.name));
-      return HANKYUNG_KOSPI_STOCK_SECTOR_BY_CODE.has(stock.shcode) || Boolean(matched?.industry);
+      return HANKYUNG_KOSPI_STOCK_SECTOR_BY_CODE.has(stock.shcode) ||
+        HANKYUNG_KOSPI_SECTOR_NAMES.has(canonicalKoreaSectorName(matched?.industry, stock));
     })
     .sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0));
   return {
@@ -496,6 +498,7 @@ async function getHankyungStockLookup() {
       if (!name) return;
       const normalized = normalizeKoreaStockName(name);
       const industry = hankyungIndustryName(stock, industryMap);
+      if (symbol === "KOSPI" && !HANKYUNG_KOSPI_SECTOR_NAMES.has(industry)) return;
       const industryUpcode = hankyungIndustryCodes(stock).find((code) => industryMap.get(code)) || "";
       const value = { ...stock, industry, industryUpcode, sourceMarket: symbol };
       if (!byName.has(name)) byName.set(name, value);
@@ -600,6 +603,7 @@ function normalizeKoreaMap(symbol, industries, stocks) {
     const upcode = hankyungIndustryCodes(stock).find((code) => industryNames.get(code)) ||
       String(stock.upcode || stock.upcode_m || "ETC");
     const industryName = canonicalKoreaSectorName(hankyungIndustryName(stock, industryNames), stock);
+    if (symbol === "KOSPI" && !HANKYUNG_KOSPI_SECTOR_NAMES.has(industryName)) return;
     const groupKey = industryName || upcode;
     const group = groups.get(groupKey) || {
       name: industryName,
