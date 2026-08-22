@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const HANKYUNG_KOSPI_STOCK_CODES_BY_SECTOR = require("./hankyung-kospi-sectors.json");
+const HANKYUNG_KOSDAQ_FALLBACK_MAP = require("./hankyung-kosdaq-fallback.json");
 
 const PORT = Number(process.env.PORT || 8000);
 const ROOT = __dirname;
@@ -782,6 +783,17 @@ async function getKoreaMap(res, market, termValue) {
       sendJson(res, 200, await enrichKoreaMapWithRealtime(socketMap));
       return;
     } catch (error) {
+      if (symbol === "KOSDAQ") {
+        const fallbackMap = normalizeHankyungSocketMap(
+          symbol,
+          term,
+          structuredClone(HANKYUNG_KOSDAQ_FALLBACK_MAP)
+        );
+        fallbackMap.id = `HANKYUNG-SNAPSHOT-${symbol}-${term}`;
+        fallbackMap.source = "Hankyung Snapshot";
+        sendJson(res, 200, await enrichKoreaMapWithRealtime(fallbackMap));
+        return;
+      }
       // Fall through to the REST and holiday-safe fallback sources below.
     }
   }
