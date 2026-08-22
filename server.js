@@ -359,7 +359,15 @@ async function fetchNaverMarketMap(symbol, stockLookup = new Map()) {
       if (!byCode.has(stock.shcode)) byCode.set(stock.shcode, stock);
     });
   });
-  const stocks = Array.from(byCode.values()).sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0));
+  const stocks = Array.from(byCode.values())
+    .filter((stock) => {
+      if (symbol !== "KOSPI") return true;
+      const matched = stockLookup.get(stock.shcode) ||
+        stockLookup.get(stock.name) ||
+        stockLookup.get(normalizeKoreaStockName(stock.name));
+      return HANKYUNG_KOSPI_STOCK_SECTOR_BY_CODE.has(stock.shcode) || Boolean(matched?.industry);
+    })
+    .sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0));
   return {
     name: `Naver ${symbol}`,
     header: "1day",
