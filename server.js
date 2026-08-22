@@ -12,6 +12,7 @@ const HANKYUNG_API_KEY =
   "0ZdNlr7LrQoawewqweq78k6usasBsqhqSIaUarSTf8mxnHuQVh9CvKAfpUy94LhBmZMg";
 const KOSPD_MAP_BASE_URL = "https://www.kospd.com/maps";
 const KOSPD_TERMS = new Set(["1day", "1week", "1month", "3months", "6months", "1year", "ytd"]);
+const HANKYUNG_SOCKET_TERMS = new Set(["1day", "1week", "1month", "3months", "6months", "1year"]);
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36";
 
@@ -275,12 +276,40 @@ const HANKYUNG_KOSPI_INDUSTRY_NAMES = new Map([
   ["1046", "IT 서비스"],
   ["1047", "오락·문화"],
 ]);
+const HANKYUNG_KOSDAQ_INDUSTRY_NAMES = new Map([
+  ["2012", "일반서비스"],
+  ["2014", "전기·가스"],
+  ["2021", "농업·임업 및 어업"],
+  ["2026", "건설"],
+  ["2027", "유통"],
+  ["2029", "운송·창고"],
+  ["2031", "금융"],
+  ["2032", "부동산"],
+  ["2037", "오락·문화"],
+  ["2056", "음식료·담배"],
+  ["2058", "섬유·의류"],
+  ["2062", "종이·목재"],
+  ["2063", "출판·매체복제"],
+  ["2065", "화학"],
+  ["2066", "제약"],
+  ["2067", "비금속"],
+  ["2068", "금속"],
+  ["2070", "기계·장비"],
+  ["2072", "전기·전자"],
+  ["2074", "의료·정밀기기"],
+  ["2075", "운송장비·부품"],
+  ["2077", "기타제조"],
+  ["2094", "기타금융"],
+  ["2114", "통신"],
+  ["2118", "IT 서비스"],
+]);
 const HANKYUNG_KOSPI_STOCK_SECTOR_BY_CODE = new Map(
   Object.entries(HANKYUNG_KOSPI_STOCK_CODES_BY_SECTOR).flatMap(([sector, codes]) =>
     codes.map((code) => [code, sector])
   )
 );
 const HANKYUNG_KOSPI_SECTOR_NAMES = new Set(HANKYUNG_KOSPI_INDUSTRY_NAMES.values());
+const HANKYUNG_KOSDAQ_SECTOR_NAMES = new Set(HANKYUNG_KOSDAQ_INDUSTRY_NAMES.values());
 
 function canonicalKoreaSectorName(name, stock = {}) {
   const code = String(stock.shcode || stock.code || stock.symbol || "").replace(/\D/g, "");
@@ -433,7 +462,10 @@ function parseKospdMapData(html) {
 }
 
 function buildHankyungIndustryMap(industries = []) {
-  const map = new Map(HANKYUNG_KOSPI_INDUSTRY_NAMES);
+  const map = new Map([
+    ...HANKYUNG_KOSPI_INDUSTRY_NAMES,
+    ...HANKYUNG_KOSDAQ_INDUSTRY_NAMES,
+  ]);
   (Array.isArray(industries) ? industries : []).forEach((industry) => {
     const name = industry.name || industry.hname || industry.korName || "";
     if (!name) return;
@@ -500,6 +532,7 @@ async function getHankyungStockLookup() {
       const normalized = normalizeKoreaStockName(name);
       const industry = hankyungIndustryName(stock, industryMap);
       if (symbol === "KOSPI" && !HANKYUNG_KOSPI_SECTOR_NAMES.has(industry)) return;
+      if (symbol === "KOSDAQ" && !HANKYUNG_KOSDAQ_SECTOR_NAMES.has(industry)) return;
       const industryUpcode = hankyungIndustryCodes(stock).find((code) => industryMap.get(code)) || "";
       const value = { ...stock, industry, industryUpcode, sourceMarket: symbol };
       if (!byName.has(name)) byName.set(name, value);
@@ -605,6 +638,7 @@ function normalizeKoreaMap(symbol, industries, stocks) {
       String(stock.upcode || stock.upcode_m || "ETC");
     const industryName = canonicalKoreaSectorName(hankyungIndustryName(stock, industryNames), stock);
     if (symbol === "KOSPI" && !HANKYUNG_KOSPI_SECTOR_NAMES.has(industryName)) return;
+    if (symbol === "KOSDAQ" && !HANKYUNG_KOSDAQ_SECTOR_NAMES.has(industryName)) return;
     const groupKey = industryName || upcode;
     const group = groups.get(groupKey) || {
       name: industryName,
@@ -785,24 +819,27 @@ function parseKospdTerm(value) {
 async function getKoreaMap(res, market, termValue) {
   const symbol = parseKoreaMarket(market);
   const term = parseKospdTerm(termValue);
-  if ((symbol === "KOSPI" || symbol === "KOSDAQ") && term === "1day") {
+  const useHankyungSocket = (symbol === "KOSPI" && term === "1day") ||
+    (symbol === "KOSDAQ" && HANKYUNG_SOCKET_TERMS.has(term));
+  if (useHankyungSocket) {
     try {
       const socketRequest = fetchHankyungSocketMap(symbol, term);
       const socketMap = symbol === "KOSDAQ"
         ? await promiseWithTimeout(socketRequest, 2500, "Hankyung KOSDAQ socket timed out")
         : await socketRequest;
-      sendJson(res, 200, await enrichKoreaMapWithRealtime(socketMap));
+      sendJson(res, 200, await enrichKoreaMapWithRealtime(socketMap, { preserveRate: term !== "1day" }));
       return;
     } catch (error) {
       if (symbol === "KOSDAQ") {
+        const fallbackSource = HANKYUNG_KOSDAQ_FALLBACK_MAP[term] || HANKYUNG_KOSDAQ_FALLBACK_MAP["1day"];
         const fallbackMap = normalizeHankyungSocketMap(
           symbol,
           term,
-          structuredClone(HANKYUNG_KOSDAQ_FALLBACK_MAP)
+          structuredClone(fallbackSource)
         );
         fallbackMap.id = `HANKYUNG-SNAPSHOT-${symbol}-${term}`;
         fallbackMap.source = "Hankyung Snapshot";
-        sendJson(res, 200, await enrichKoreaMapWithRealtime(fallbackMap));
+        sendJson(res, 200, await enrichKoreaMapWithRealtime(fallbackMap, { preserveRate: term !== "1day" }));
         return;
       }
       // Fall through to the REST and holiday-safe fallback sources below.
