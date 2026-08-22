@@ -961,7 +961,7 @@ function updateRefreshMode() {
   const usOpen = usClock.isWeekday && isClockBetween(usClock.minutes, 9, 30, 16, 0);
   const active = koreaOpen || usOpen;
   if (active) {
-    elements.refreshLabel.textContent = "개장 중: 3초마다 자동 새로고침";
+    elements.refreshLabel.textContent = "개장 중: 30초마다 자동 새로고침";
   } else if (!koreaClock.isWeekday && !usClock.isWeekday) {
     elements.refreshLabel.textContent = "휴일: 마지막 거래일 데이터 표시";
   } else {
@@ -975,7 +975,7 @@ function resetTimers() {
   state.timers = [];
 
   if (updateRefreshMode()) {
-    state.timers.push(setInterval(refreshAll, 3000));
+    state.timers.push(setInterval(refreshAll, 30000));
   }
   checkKoreaFinalRefresh();
   state.timers.push(setInterval(resetTimers, 60000));

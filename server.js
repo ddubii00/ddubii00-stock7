@@ -776,7 +776,7 @@ function parseKospdTerm(value) {
 async function getKoreaMap(res, market, termValue) {
   const symbol = parseKoreaMarket(market);
   const term = parseKospdTerm(termValue);
-  if (symbol === "KOSPI" && term === "1day") {
+  if ((symbol === "KOSPI" || symbol === "KOSDAQ") && term === "1day") {
     try {
       const socketMap = await fetchHankyungSocketMap(symbol, term);
       sendJson(res, 200, await enrichKoreaMapWithRealtime(socketMap));
