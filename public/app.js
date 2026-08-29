@@ -13,6 +13,9 @@ const state = {
   timers: [],
   finalKoreaRefreshKey: "",
   koreaMapRequestId: 0,
+  koreaMapPending: null,
+  koreaPeriodMaps: new Map(),
+  koreaPeriodMapsUpdatedAt: new Map(),
 };
 
 const KOSPD_TERMS = {
@@ -582,10 +585,38 @@ function updateKoreaMapData(data) {
   });
 }
 
+function koreaPeriodMapKey(market, term) {
+  return `${market}:${term}`;
+}
+
+function storeKoreaPeriodMaps(market, data) {
+  const periodMaps = data?.periodMaps || {};
+  delete data.periodMaps;
+  Object.entries(periodMaps).forEach(([term, map]) => {
+    if (!map?.children?.length) return;
+    state.koreaPeriodMaps.set(koreaPeriodMapKey(market, term), map);
+  });
+  state.koreaPeriodMaps.set(koreaPeriodMapKey(market, state.koreaTerm), data);
+  state.koreaPeriodMapsUpdatedAt.set(market, Date.now());
+}
+
+function renderRecentKoreaPeriodMap() {
+  const updatedAt = state.koreaPeriodMapsUpdatedAt.get(state.koreaMarket) || 0;
+  if (Date.now() - updatedAt >= 20000) return false;
+  const data = state.koreaPeriodMaps.get(koreaPeriodMapKey(state.koreaMarket, state.koreaTerm));
+  if (!data?.children?.length) return false;
+  renderKoreaMap(structuredClone(data));
+  elements.koreaLoading.hidden = true;
+  return true;
+}
+
 async function refreshKoreaMap({ forceRender = false, showLoading = false } = {}) {
-  const requestId = ++state.koreaMapRequestId;
   const requestedMarket = state.koreaMarket;
   const requestedTerm = state.koreaTerm;
+  const pendingKey = koreaPeriodMapKey(requestedMarket, requestedTerm);
+  if (!showLoading && state.koreaMapPending?.key === pendingKey) return;
+  const requestId = ++state.koreaMapRequestId;
+  state.koreaMapPending = { id: requestId, key: pendingKey };
   if (showLoading) {
     state.koreaMap = null;
     elements.koreaMap.innerHTML = "";
@@ -603,6 +634,7 @@ async function refreshKoreaMap({ forceRender = false, showLoading = false } = {}
     ) {
       return;
     }
+    storeKoreaPeriodMaps(requestedMarket, data);
     const sectorMembershipChanged = state.koreaMap &&
       koreaSectorMembershipSignature(state.koreaMap) !== koreaSectorMembershipSignature(data);
     if (forceRender || sectorMembershipChanged || !state.koreaMap || !elements.koreaMap.querySelector(".tile")) {
@@ -630,6 +662,8 @@ async function refreshKoreaMap({ forceRender = false, showLoading = false } = {}
       elements.koreaLoading.textContent = `${state.koreaMarket} 맵을 불러오는 중`;
       refreshKoreaMap({ forceRender: true, showLoading: true });
     });
+  } finally {
+    if (state.koreaMapPending?.id === requestId) state.koreaMapPending = null;
   }
 }
 
@@ -642,6 +676,7 @@ function setKoreaMarket(market) {
   });
   state.koreaMap = null;
   elements.koreaMap.innerHTML = "";
+  if (renderRecentKoreaPeriodMap()) return;
   refreshKoreaMap({ forceRender: true, showLoading: true });
 }
 
@@ -654,6 +689,7 @@ function setKoreaTerm(term) {
   });
   state.koreaMap = null;
   elements.koreaMap.innerHTML = "";
+  if (renderRecentKoreaPeriodMap()) return;
   refreshKoreaMap({ forceRender: true, showLoading: true });
 }
 

@@ -801,6 +801,15 @@ async function fetchHankyungSocketMap(symbol, term = "1day") {
   return structuredClone(normalized);
 }
 
+function getCachedHankyungPeriodMaps(symbol) {
+  return Object.fromEntries(
+    Array.from(HANKYUNG_SOCKET_TERMS)
+      .map((term) => [term, cache.get(`hankyung-socket-map:${symbol}:${term}`)?.data])
+      .filter(([, map]) => map?.children?.length)
+      .map(([term, map]) => [term, structuredClone(map)])
+  );
+}
+
 function parseKoreaMarket(value) {
   const market = String(value || "KOSPI").toUpperCase();
   if (market === "KRX300") return "KRX300";
@@ -819,7 +828,9 @@ async function getKoreaMap(res, market, termValue) {
     HANKYUNG_SOCKET_TERMS.has(term);
   if (useHankyungSocket) {
     const socketMap = await fetchHankyungSocketMap(symbol, term);
-    sendJson(res, 200, await enrichKoreaMapWithRealtime(socketMap, { preserveRate: term !== "1day" }));
+    const enrichedMap = await enrichKoreaMapWithRealtime(socketMap, { preserveRate: term !== "1day" });
+    enrichedMap.periodMaps = getCachedHankyungPeriodMaps(symbol);
+    sendJson(res, 200, enrichedMap);
     return;
   }
   if (symbol === "KRX300" || term !== "1day") {
