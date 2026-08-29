@@ -3,7 +3,6 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const HANKYUNG_KOSPI_STOCK_CODES_BY_SECTOR = require("./hankyung-kospi-sectors.json");
-const HANKYUNG_KOSDAQ_FALLBACK_MAP = require("./hankyung-kosdaq-fallback.json");
 
 const PORT = Number(process.env.PORT || 8000);
 const ROOT = __dirname;
@@ -762,7 +761,7 @@ function normalizeHankyungSocketMap(symbol, term, map) {
 async function fetchHankyungSocketMap(symbol, term = "1day") {
   const cacheKey = `hankyung-socket-map:${symbol}:${term}`;
   const cached = cache.get(cacheKey);
-  if (cached?.data && Date.now() - cached.time < 2500) {
+  if (cached?.data && Date.now() - cached.time < 19000) {
     return structuredClone(cached.data);
   }
 
@@ -791,18 +790,15 @@ async function fetchHankyungSocketMap(symbol, term = "1day") {
   const [receivedEvent, maps] = JSON.parse(eventPacket.slice(2));
   if (receivedEvent !== eventName || !maps?.[term]) throw new Error(`Hankyung ${term} map is missing`);
 
-  const normalized = normalizeHankyungSocketMap(symbol, term, maps[term]);
-  if (!normalized.children.length) throw new Error(`Hankyung ${symbol} socket map is empty`);
-  cache.set(cacheKey, { time: Date.now(), data: normalized });
-  return structuredClone(normalized);
-}
-
-function promiseWithTimeout(promise, timeoutMs, message) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  const receivedAt = Date.now();
+  HANKYUNG_SOCKET_TERMS.forEach((mapTerm) => {
+    if (!maps?.[mapTerm]) return;
+    const mapData = normalizeHankyungSocketMap(symbol, mapTerm, maps[mapTerm]);
+    cache.set(`hankyung-socket-map:${symbol}:${mapTerm}`, { time: receivedAt, data: mapData });
   });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  const normalized = cache.get(cacheKey)?.data;
+  if (!normalized?.children?.length) throw new Error(`Hankyung ${symbol} socket map is empty`);
+  return structuredClone(normalized);
 }
 
 function parseKoreaMarket(value) {
@@ -819,31 +815,12 @@ function parseKospdTerm(value) {
 async function getKoreaMap(res, market, termValue) {
   const symbol = parseKoreaMarket(market);
   const term = parseKospdTerm(termValue);
-  const useHankyungSocket = (symbol === "KOSPI" && term === "1day") ||
-    (symbol === "KOSDAQ" && HANKYUNG_SOCKET_TERMS.has(term));
+  const useHankyungSocket = (symbol === "KOSPI" || symbol === "KOSDAQ") &&
+    HANKYUNG_SOCKET_TERMS.has(term);
   if (useHankyungSocket) {
-    try {
-      const socketRequest = fetchHankyungSocketMap(symbol, term);
-      const socketMap = symbol === "KOSDAQ"
-        ? await promiseWithTimeout(socketRequest, 2500, "Hankyung KOSDAQ socket timed out")
-        : await socketRequest;
-      sendJson(res, 200, await enrichKoreaMapWithRealtime(socketMap, { preserveRate: term !== "1day" }));
-      return;
-    } catch (error) {
-      if (symbol === "KOSDAQ") {
-        const fallbackSource = HANKYUNG_KOSDAQ_FALLBACK_MAP[term] || HANKYUNG_KOSDAQ_FALLBACK_MAP["1day"];
-        const fallbackMap = normalizeHankyungSocketMap(
-          symbol,
-          term,
-          structuredClone(fallbackSource)
-        );
-        fallbackMap.id = `HANKYUNG-SNAPSHOT-${symbol}-${term}`;
-        fallbackMap.source = "Hankyung Snapshot";
-        sendJson(res, 200, await enrichKoreaMapWithRealtime(fallbackMap, { preserveRate: term !== "1day" }));
-        return;
-      }
-      // Fall through to the REST and holiday-safe fallback sources below.
-    }
+    const socketMap = await fetchHankyungSocketMap(symbol, term);
+    sendJson(res, 200, await enrichKoreaMapWithRealtime(socketMap, { preserveRate: term !== "1day" }));
+    return;
   }
   if (symbol === "KRX300" || term !== "1day") {
     const sourceUrl = `${KOSPD_MAP_BASE_URL}/${term}`;

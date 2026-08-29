@@ -25,8 +25,6 @@ const KOSPD_TERMS = {
   ytd: "연초",
 };
 
-const KOREA_MAP_CACHE_PREFIX = "stock7:korea-map:v3:";
-
 const elements = {
   kospiIndex: document.getElementById("kospiIndex"),
   kosdaqIndex: document.getElementById("kosdaqIndex"),
@@ -136,41 +134,6 @@ async function getJson(url) {
     request.ontimeout = () => reject(new Error("네트워크 요청 시간이 초과되었습니다."));
     request.send();
   });
-}
-
-function storageGet(key) {
-  try {
-    return localStorage.getItem(key);
-  } catch (error) {
-    return null;
-  }
-}
-
-function storageSet(key, value) {
-  try {
-    localStorage.setItem(key, value);
-  } catch (error) {
-    // 최신 네트워크 응답 경로는 저장소를 사용할 수 없어도 정상 동작합니다.
-  }
-}
-
-function koreaMapCacheKey() {
-  return `${KOREA_MAP_CACHE_PREFIX}${state.koreaMarket}:${state.koreaTerm}`;
-}
-
-function renderCachedKoreaMap() {
-  if (state.koreaMap) return false;
-  const cached = storageGet(koreaMapCacheKey());
-  if (!cached) return false;
-  try {
-    const data = JSON.parse(cached);
-    if (!data?.children?.length) return false;
-    renderKoreaMap(data);
-    elements.koreaLoading.hidden = true;
-    return true;
-  } catch (error) {
-    return false;
-  }
 }
 
 function setIndex(el, index = {}) {
@@ -623,8 +586,12 @@ async function refreshKoreaMap({ forceRender = false, showLoading = false } = {}
   const requestId = ++state.koreaMapRequestId;
   const requestedMarket = state.koreaMarket;
   const requestedTerm = state.koreaTerm;
-  const showedCachedMap = renderCachedKoreaMap();
-  if (showLoading && !showedCachedMap) elements.koreaLoading.hidden = false;
+  if (showLoading) {
+    state.koreaMap = null;
+    elements.koreaMap.innerHTML = "";
+    elements.koreaLoading.textContent = `${requestedMarket} ${KOSPD_TERMS[requestedTerm]} 데이터를 최신으로 갱신하는 중`;
+    elements.koreaLoading.hidden = false;
+  }
   try {
     const data = await getJson(
       `/api/korea-map?market=${encodeURIComponent(requestedMarket)}&term=${encodeURIComponent(requestedTerm)}`
@@ -636,7 +603,6 @@ async function refreshKoreaMap({ forceRender = false, showLoading = false } = {}
     ) {
       return;
     }
-    storageSet(koreaMapCacheKey(), JSON.stringify(data));
     const sectorMembershipChanged = state.koreaMap &&
       koreaSectorMembershipSignature(state.koreaMap) !== koreaSectorMembershipSignature(data);
     if (forceRender || sectorMembershipChanged || !state.koreaMap || !elements.koreaMap.querySelector(".tile")) {
@@ -1133,5 +1099,7 @@ elements.termSegments.forEach((button) => {
   button.addEventListener("click", () => setKoreaTerm(button.dataset.term));
 });
 
-refreshAll();
+refreshIndices();
+refreshKoreaMap({ forceRender: true, showLoading: true });
+refreshUsMap({ forceRender: true, showLoading: true });
 resetTimers();
