@@ -87,6 +87,15 @@
             <button class="refresh-button" id="refreshUs" type="button" title="새로고침" aria-label="미국 맵 새로고침">새로고침</button>
           </div>
         </div>
+        <div class="period-bar" aria-label="미국 맵 조회기간">
+          <button class="period active" type="button" data-us-term="1day">1일</button>
+          <button class="period" type="button" data-us-term="1week">일주일</button>
+          <button class="period" type="button" data-us-term="1month">한 달</button>
+          <button class="period" type="button" data-us-term="3months">세 달</button>
+          <button class="period" type="button" data-us-term="6months">여섯 달</button>
+          <button class="period" type="button" data-us-term="1year">일 년</button>
+          <button class="period" type="button" data-us-term="ytd">연초</button>
+        </div>
         <div class="map-frame">
           <div id="usMap" class="treemap" role="application" aria-label="미국 주식 마켓맵"></div>
           <div id="usLoading" class="loading">미국 주식 맵을 불러오는 중</div>
@@ -101,6 +110,6 @@
       </article>
     </div>
 
-    <script src="/app.js?v=fast-korea-rest-20260830"></script>
+    <script src="/app.js?v=us-period-maps-20260830"></script>
   </body>
 </html>

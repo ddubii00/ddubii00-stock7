@@ -3,6 +3,7 @@ const state = {
   usMap: null,
   koreaMarket: "KOSPI",
   koreaTerm: "1day",
+  usTerm: "1day",
   koreaSector: "",
   usSector: "",
   koreaQuoteCache: new Map(),
@@ -15,6 +16,9 @@ const state = {
   koreaMapRequestId: 0,
   koreaMapPending: null,
   koreaPeriodMaps: new Map(),
+  usMapRequestId: 0,
+  usMapPending: null,
+  usPeriodMaps: new Map(),
 };
 
 const KOSPD_TERMS = {
@@ -48,6 +52,7 @@ const elements = {
   usSectorBack: document.getElementById("usSectorBack"),
   marketSegments: document.querySelectorAll("[data-market]"),
   termSegments: document.querySelectorAll("[data-term]"),
+  usTermSegments: document.querySelectorAll("[data-us-term]"),
   modalBackdrop: document.getElementById("modalBackdrop"),
   modalBody: document.getElementById("modalBody"),
   modalClose: document.getElementById("modalClose"),
@@ -320,9 +325,12 @@ function updateKoreaHeader() {
 
 function updateUsHeader() {
   elements.usTitle.textContent = state.usSector ? `US Stocks / ${state.usSector}` : "US Stocks";
-  elements.usSubtitle.textContent = state.usSector ? `${state.usSector} 섹터 1일 맵` : "미국 주식 1일 맵";
+  const termLabel = KOSPD_TERMS[state.usTerm] || "1일";
+  elements.usSubtitle.textContent = state.usSector
+    ? `${state.usSector} 섹터 ${termLabel} 맵`
+    : `미국 주식 ${termLabel} 맵`;
   elements.usMap.setAttribute("aria-label", state.usSector ? `미국 ${state.usSector} 섹터 마켓맵` : "미국 주식 마켓맵");
-  elements.usLoading.textContent = "미국 주식 맵을 불러오는 중";
+  elements.usLoading.textContent = `미국 주식 ${termLabel} 맵을 불러오는 중`;
   elements.usSectorBack.hidden = !state.usSector;
 }
 
@@ -887,9 +895,25 @@ function hideTooltip() {
 }
 
 async function refreshUsMap({ forceRender = false, showLoading = false } = {}) {
-  if (showLoading) elements.usLoading.hidden = false;
+  const requestedTerm = state.usTerm;
+  if (!showLoading && state.usMapPending?.term === requestedTerm) return;
+  const requestId = ++state.usMapRequestId;
+  state.usMapPending = { id: requestId, term: requestedTerm };
+  if (showLoading) {
+    state.usMap = null;
+    elements.usMap.innerHTML = "";
+    elements.usLoading.textContent = `미국 주식 ${KOSPD_TERMS[requestedTerm]} 데이터를 최신으로 갱신하는 중`;
+    elements.usLoading.hidden = false;
+  }
   try {
-    const data = await getJson("/api/us-map");
+    const data = await getJson(`/api/us-map?term=${encodeURIComponent(requestedTerm)}`);
+    if (requestId !== state.usMapRequestId || requestedTerm !== state.usTerm) return;
+    const periodMaps = data?.periodMaps || {};
+    delete data.periodMaps;
+    Object.entries(periodMaps).forEach(([term, map]) => {
+      if (map?.children?.length) state.usPeriodMaps.set(term, map);
+    });
+    state.usPeriodMaps.set(requestedTerm, data);
     if (forceRender || !state.usMap || !elements.usMap.querySelector(".tile")) {
       renderUsMap(data);
     } else {
@@ -897,6 +921,7 @@ async function refreshUsMap({ forceRender = false, showLoading = false } = {}) {
     }
     elements.usLoading.hidden = true;
   } catch (error) {
+    if (requestId !== state.usMapRequestId || requestedTerm !== state.usTerm) return;
     elements.usLoading.hidden = false;
     elements.usLoading.innerHTML = `
       <div class="load-error">
@@ -908,7 +933,25 @@ async function refreshUsMap({ forceRender = false, showLoading = false } = {}) {
       elements.usLoading.textContent = "미국 주식 맵을 불러오는 중";
       refreshUsMap({ forceRender: true, showLoading: true });
     });
+  } finally {
+    if (state.usMapPending?.id === requestId) state.usMapPending = null;
   }
+}
+
+function setUsTerm(term) {
+  state.usTerm = KOSPD_TERMS[term] ? term : "1day";
+  state.usSector = "";
+  updateUsHeader();
+  elements.usTermSegments.forEach((button) => {
+    button.classList.toggle("active", button.dataset.usTerm === state.usTerm);
+  });
+  const data = state.usPeriodMaps.get(state.usTerm);
+  if (data?.children?.length) {
+    renderUsMap(structuredClone(data));
+    elements.usLoading.hidden = true;
+    return;
+  }
+  refreshUsMap({ forceRender: true, showLoading: true });
 }
 
 function setUsSector(sectorName) {
@@ -1129,6 +1172,9 @@ elements.marketSegments.forEach((button) => {
 });
 elements.termSegments.forEach((button) => {
   button.addEventListener("click", () => setKoreaTerm(button.dataset.term));
+});
+elements.usTermSegments.forEach((button) => {
+  button.addEventListener("click", () => setUsTerm(button.dataset.usTerm));
 });
 
 refreshIndices();

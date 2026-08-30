@@ -12,6 +12,7 @@ const HANKYUNG_API_KEY =
 const KOSPD_MAP_BASE_URL = "https://www.kospd.com/maps";
 const KOSPD_TERMS = new Set(["1day", "1week", "1month", "3months", "6months", "1year", "ytd"]);
 const HANKYUNG_SOCKET_TERMS = new Set(["1day", "1week", "1month", "3months", "6months", "1year"]);
+const US_MAP_TERMS = new Set(["1day", "1week", "1month", "3months", "6months", "1year", "ytd"]);
 const HANKYUNG_PERIOD_BASE_FIELDS = new Map([
   ["1week", "close_1wk"],
   ["1month", "close_1mo"],
@@ -1418,8 +1419,23 @@ async function fetchTradingViewStockQuote(symbol) {
   };
 }
 
-async function fetchTradingViewUsMap() {
-  const columns = ["name", "description", "sector", "close", "change", "change_abs", "volume", "market_cap_basic"];
+async function fetchTradingViewUsPeriodMaps() {
+  const columns = [
+    "name",
+    "description",
+    "sector",
+    "close",
+    "change",
+    "change_abs",
+    "volume",
+    "market_cap_basic",
+    "Perf.W",
+    "Perf.1M",
+    "Perf.3M",
+    "Perf.6M",
+    "Perf.Y",
+    "Perf.YTD",
+  ];
   const data = await fetchJson(
     "https://scanner.tradingview.com/america/scan",
     {
@@ -1441,72 +1457,90 @@ async function fetchTradingViewUsMap() {
     15000
   );
 
-  const groups = new Map();
-  (data.data || []).forEach((row) => {
+  const stocks = (data.data || []).map((row) => {
     const values = row.d || [];
     const ticker = String(row.s || "").split(":").pop()?.replace("-", ".") || values[0];
     const exchange = String(row.s || "").split(":")[0] || "";
     const sectorName = values[2] || "Other";
     const description = values[1] || values[0] || ticker;
-    if (!["NASDAQ", "NYSE", "AMEX"].includes(exchange)) return;
-    if (/[/$]/.test(ticker)) return;
-    if (/preferred|depositary|warrant|right|unit|note|bond|debenture/i.test(description)) return;
+    if (!["NASDAQ", "NYSE", "AMEX"].includes(exchange)) return null;
+    if (/[/$]/.test(ticker)) return null;
+    if (/preferred|depositary|warrant|right|unit|note|bond|debenture/i.test(description)) return null;
     const close = formatNumber(values[3]);
-    const rate = formatNumber(values[4]);
-    const change = formatNumber(values[5]);
     const volume = formatNumber(values[6]);
     const marketCap = formatNumber(values[7]);
-    if (!ticker || marketCap == null || close == null) return;
+    if (!ticker || marketCap == null || close == null) return null;
+    return { values, ticker, exchange, sectorName, description, close, volume, marketCap };
+  }).filter(Boolean);
 
-    const group = groups.get(sectorName) || {
-      name: sectorName,
-      upcode: sectorName,
-      type: "industry",
-      children: [],
-    };
-    group.children.push({
-      shcode: ticker,
-      symbol: ticker,
-      name: description,
-      shortName: values[0] || ticker,
-      exchange,
-      value: marketCap,
-      marketCap,
-      chgrate: rate || 0,
-      chgprc: change,
-      date: "",
-      volume,
-      tradingValue: tradingValueUsd(close, volume),
-      close,
-      previous: close != null && change != null ? close - change : null,
-      sourceMarket: "US",
-      fill: kospdHeatColor(rate),
-      type: "stock",
+  const rateIndexes = new Map([
+    ["1day", 4],
+    ["1week", 8],
+    ["1month", 9],
+    ["3months", 10],
+    ["6months", 11],
+    ["1year", 12],
+    ["ytd", 13],
+  ]);
+
+  return Object.fromEntries(Array.from(US_MAP_TERMS).map((term) => {
+    const groups = new Map();
+    stocks.forEach(({ values, ticker, exchange, sectorName, description, close, volume, marketCap }) => {
+      const rate = formatNumber(values[rateIndexes.get(term)]) ?? 0;
+      const previous = term === "1day"
+        ? close - (formatNumber(values[5]) ?? 0)
+        : rate !== -100 ? close / (1 + rate / 100) : close;
+      const change = close - previous;
+      const group = groups.get(sectorName) || {
+        name: sectorName,
+        upcode: sectorName,
+        type: "industry",
+        children: [],
+      };
+      group.children.push({
+        shcode: ticker,
+        symbol: ticker,
+        name: description,
+        shortName: values[0] || ticker,
+        exchange,
+        value: marketCap,
+        marketCap,
+        chgrate: rate,
+        chgprc: change,
+        date: "",
+        volume,
+        tradingValue: tradingValueUsd(close, volume),
+        close,
+        previous,
+        sourceMarket: "US",
+        fill: kospdHeatColor(rate),
+        type: "stock",
+      });
+      groups.set(sectorName, group);
     });
-    groups.set(sectorName, group);
-  });
 
-  const children = Array.from(groups.values())
-    .map((group) => ({
-      ...group,
-      children: group.children.sort((a, b) => b.value - a.value),
-    }))
-    .filter((group) => group.children.length)
-    .sort(
-      (a, b) =>
-        b.children.reduce((sum, stock) => sum + stock.value, 0) -
-        a.children.reduce((sum, stock) => sum + stock.value, 0)
-    );
+    const children = Array.from(groups.values())
+      .map((group) => ({
+        ...group,
+        children: group.children.sort((a, b) => b.value - a.value),
+      }))
+      .filter((group) => group.children.length)
+      .sort(
+        (a, b) =>
+          b.children.reduce((sum, stock) => sum + stock.value, 0) -
+          a.children.reduce((sum, stock) => sum + stock.value, 0)
+      );
 
-  return {
-    name: "US Stock Heat Map",
-    header: "1day",
-    id: "US-STOCKS-1DAY",
-    symbol: "US",
-    source: "TradingView",
-    children,
-    updatedAt: new Date().toISOString(),
-  };
+    return [term, {
+      name: "US Stock Heat Map",
+      header: term,
+      id: `US-STOCKS-${term.toUpperCase()}`,
+      symbol: "US",
+      source: "TradingView",
+      children,
+      updatedAt: new Date().toISOString(),
+    }];
+  }));
 }
 
 function tradingViewIndex(name, quotes, symbol) {
@@ -1600,8 +1634,14 @@ async function getUsStock(res, ticker) {
   });
 }
 
-async function getUsMap(res) {
-  sendJson(res, 200, await fetchTradingViewUsMap());
+async function getUsMap(res, termValue) {
+  const term = US_MAP_TERMS.has(String(termValue || "").toLowerCase())
+    ? String(termValue).toLowerCase()
+    : "1day";
+  const periodMaps = await fetchTradingViewUsPeriodMaps();
+  const map = structuredClone(periodMaps[term]);
+  map.periodMaps = periodMaps;
+  sendJson(res, 200, map);
 }
 
 async function getFinvizMap(res) {
@@ -2026,7 +2066,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/us-map") {
-      await getUsMap(res);
+      await getUsMap(res, url.searchParams.get("term"));
       return;
     }
 
