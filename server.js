@@ -12,6 +12,13 @@ const HANKYUNG_API_KEY =
 const KOSPD_MAP_BASE_URL = "https://www.kospd.com/maps";
 const KOSPD_TERMS = new Set(["1day", "1week", "1month", "3months", "6months", "1year", "ytd"]);
 const HANKYUNG_SOCKET_TERMS = new Set(["1day", "1week", "1month", "3months", "6months", "1year"]);
+const HANKYUNG_PERIOD_BASE_FIELDS = new Map([
+  ["1week", "close_1wk"],
+  ["1month", "close_1mo"],
+  ["3months", "close_3mo"],
+  ["6months", "close_6mo"],
+  ["1year", "close_1yr"],
+]);
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36";
 
@@ -695,6 +702,117 @@ function normalizeKoreaMap(symbol, industries, stocks) {
   };
 }
 
+function hankyungPeriodBase(stock, term) {
+  if (term === "1day") {
+    return formatNumber(stock.close_1dy ?? stock.preprice ?? stock.baseprc);
+  }
+  return formatNumber(stock[HANKYUNG_PERIOD_BASE_FIELDS.get(term)]);
+}
+
+function hankyungPercentageChange(close, previous) {
+  if (close == null || !previous) return 0;
+  const scaled = ((close - previous) * 10000) / previous;
+  return (Math.sign(scaled) * Math.round(Math.abs(scaled))) / 100;
+}
+
+function buildHankyungRestPeriodMaps(symbol, stocks) {
+  const industryNames = buildHankyungIndustryMap();
+  const groups = new Map();
+  const expectedMarketFlag = symbol === "KOSDAQ" ? "2" : "1";
+
+  stocks.forEach((stock) => {
+    if (String(stock.mktflg || stock.grpflg || "") !== expectedMarketFlag) return;
+    const industryName = canonicalKoreaSectorName(hankyungIndustryName(stock, industryNames), stock);
+    if (symbol === "KOSPI" && !HANKYUNG_KOSPI_SECTOR_NAMES.has(industryName)) return;
+    if (symbol === "KOSDAQ" && !HANKYUNG_KOSDAQ_SECTOR_NAMES.has(industryName)) return;
+    const trader = stock.stock_trader || {};
+    const value = formatNumber(trader.mkt_cap ?? stock.mkt_cap) ?? 0;
+    const rankValue = formatNumber(stock.mkt_cap) ?? value;
+    const group = groups.get(industryName) || {
+      name: industryName,
+      upcode: String(stock.upcode || stock.upcode_m || industryName),
+      type: "industry",
+      stocks: [],
+    };
+    group.stocks.push({ stock, value, rankValue });
+    groups.set(industryName, group);
+  });
+
+  const rankedGroups = Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      stocks: group.stocks.sort((a, b) => b.rankValue - a.rankValue).slice(0, 20),
+    }))
+    .filter((group) => group.stocks.length)
+    .sort(
+      (a, b) =>
+        b.stocks.reduce((sum, item) => sum + item.value, 0) -
+        a.stocks.reduce((sum, item) => sum + item.value, 0)
+    );
+
+  return Object.fromEntries(
+    Array.from(HANKYUNG_SOCKET_TERMS).map((term) => {
+      const children = rankedGroups.map((group) => ({
+        name: group.name,
+        upcode: group.upcode,
+        type: group.type,
+        children: group.stocks.map(({ stock, value }) => {
+          const trader = stock.stock_trader || {};
+          const close = formatNumber(trader.curprc ?? stock.close_1dy ?? stock.baseprc);
+          const previous = hankyungPeriodBase(stock, term);
+          const rate = hankyungPercentageChange(close, previous);
+          const volume = formatNumber(trader.volume || stock.prevol);
+          return {
+            shcode: stock.shcode,
+            name: stock.shname,
+            value,
+            chgrate: rate,
+            chgprc: close != null && previous != null ? close - previous : null,
+            date: trader.workdate || stock.workdate || "",
+            volume,
+            tradingValue: tradingValueEok(close, volume),
+            close,
+            previous,
+            open: formatNumber(trader.openprc),
+            high: formatNumber(trader.highprc),
+            low: formatNumber(trader.lowprc),
+            sourceMarket: symbol,
+            fill: hankyungHeatColor(rate),
+            type: "stock",
+          };
+        }),
+      }));
+      return [term, {
+        name: "마켓Map",
+        header: term,
+        id: `HANKYUNG-REST-${symbol}-${term}`,
+        symbol,
+        source: "Hankyung REST",
+        sourceUrl: `https://markets.hankyung.com/marketmap/${symbol.toLowerCase()}`,
+        children,
+      }];
+    })
+  );
+}
+
+async function fetchHankyungRestPeriodMaps(symbol) {
+  const cacheKey = `hankyung-rest-period-maps:${symbol}`;
+  const cached = cache.get(cacheKey);
+  if (cached?.data && Date.now() - cached.time < 19000) {
+    return structuredClone(cached.data);
+  }
+  const upcode = symbol === "KOSDAQ" ? "2001" : "1001";
+  const stocks = await fetchJson(
+    `https://markets.hankyung.com/api/v2/stock/filter/stocks?upcode=${upcode}&sortBy=mkt_cap&num=2000`,
+    { headers: hankyungHeaders(symbol), timeout: 9000 },
+    0
+  );
+  if (!Array.isArray(stocks) || !stocks.length) throw new Error(`Hankyung ${symbol} REST map is empty`);
+  const periodMaps = buildHankyungRestPeriodMaps(symbol, stocks);
+  cache.set(cacheKey, { time: Date.now(), data: periodMaps });
+  return structuredClone(periodMaps);
+}
+
 async function fetchHankyungSocketPacket(url, options = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeout || 7000);
@@ -827,10 +945,17 @@ async function getKoreaMap(res, market, termValue) {
   const useHankyungSocket = (symbol === "KOSPI" || symbol === "KOSDAQ") &&
     HANKYUNG_SOCKET_TERMS.has(term);
   if (useHankyungSocket) {
-    const socketMap = await fetchHankyungSocketMap(symbol, term);
-    const enrichedMap = await enrichKoreaMapWithRealtime(socketMap, { preserveRate: term !== "1day" });
-    enrichedMap.periodMaps = getCachedHankyungPeriodMaps(symbol);
-    sendJson(res, 200, enrichedMap);
+    let periodMaps;
+    try {
+      periodMaps = await fetchHankyungRestPeriodMaps(symbol);
+    } catch (error) {
+      await fetchHankyungSocketMap(symbol, term);
+      periodMaps = getCachedHankyungPeriodMaps(symbol);
+    }
+    const map = structuredClone(periodMaps[term]);
+    if (!map?.children?.length) throw new Error(`Hankyung ${symbol} ${term} map is empty`);
+    map.periodMaps = periodMaps;
+    sendJson(res, 200, map);
     return;
   }
   if (symbol === "KRX300" || term !== "1day") {

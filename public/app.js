@@ -15,7 +15,6 @@ const state = {
   koreaMapRequestId: 0,
   koreaMapPending: null,
   koreaPeriodMaps: new Map(),
-  koreaPeriodMapsUpdatedAt: new Map(),
 };
 
 const KOSPD_TERMS = {
@@ -597,12 +596,9 @@ function storeKoreaPeriodMaps(market, data) {
     state.koreaPeriodMaps.set(koreaPeriodMapKey(market, term), map);
   });
   state.koreaPeriodMaps.set(koreaPeriodMapKey(market, state.koreaTerm), data);
-  state.koreaPeriodMapsUpdatedAt.set(market, Date.now());
 }
 
 function renderRecentKoreaPeriodMap() {
-  const updatedAt = state.koreaPeriodMapsUpdatedAt.get(state.koreaMarket) || 0;
-  if (Date.now() - updatedAt >= 20000) return false;
   const data = state.koreaPeriodMaps.get(koreaPeriodMapKey(state.koreaMarket, state.koreaTerm));
   if (!data?.children?.length) return false;
   renderKoreaMap(structuredClone(data));
