@@ -5,6 +5,7 @@ const vm = require("vm");
 const HANKYUNG_KOSPI_STOCK_CODES_BY_SECTOR = require("./hankyung-kospi-sectors.json");
 
 const PORT = Number(process.env.PORT || 8000);
+const HOST = process.env.HOST || "127.0.0.1";
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 const HANKYUNG_API_KEY =
@@ -2084,6 +2085,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`KOSPI/Nasdaq dashboard running at http://127.0.0.1:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`KOSPI/Nasdaq dashboard running at http://${HOST}:${PORT}`);
 });

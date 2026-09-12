@@ -1,3 +1,10 @@
+const APP_BASE_PATH = (() => {
+  const scriptSource = document.currentScript?.src;
+  if (!scriptSource) return "";
+  const scriptPath = new URL(scriptSource, window.location.href).pathname;
+  return scriptPath.endsWith("/app.js") ? scriptPath.slice(0, -"/app.js".length) : "";
+})();
+
 const state = {
   koreaMap: null,
   usMap: null,
@@ -127,7 +134,8 @@ function escapeHtml(value) {
 async function getJson(url) {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
-    request.open("GET", `${url}${url.includes("?") ? "&" : "?"}ts=${Date.now()}`, true);
+    const requestUrl = url.startsWith("/") ? `${APP_BASE_PATH}${url}` : url;
+    request.open("GET", `${requestUrl}${requestUrl.includes("?") ? "&" : "?"}ts=${Date.now()}`, true);
     request.responseType = "json";
     request.timeout = 45000;
     request.onload = () => {
